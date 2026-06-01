@@ -7,10 +7,10 @@ from fastapi import (
 )
 
 from fastapi.responses import JSONResponse
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.database import engine
 from app.models.models import Base
-
 from app.api.router import api_router
 
 
@@ -18,7 +18,6 @@ from app.api.router import api_router
 async def lifespan(app: FastAPI):
 
     async with engine.begin() as conn:
-
         await conn.run_sync(
             Base.metadata.create_all
         )
@@ -32,10 +31,28 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+# ==========================
+# CORS Middleware
+# ==========================
 
-@app.exception_handler(
-    HTTPException
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
+
+# ==========================
+# Exception Handlers
+# ==========================
+
+@app.exception_handler(HTTPException)
 async def http_exception_handler(
     request: Request,
     exc: HTTPException
@@ -63,7 +80,7 @@ async def global_exception_handler(
         content={
             "success": False,
             "status_code": 500,
-            "message": str(exc),
+            "message": "Internal Server Error",
             "data": None
         }
     )
