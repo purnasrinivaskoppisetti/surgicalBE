@@ -439,10 +439,7 @@ class Product(Base):
         nullable=False
     )
 
-    gst_percent: Mapped[Decimal] = mapped_column(
-        Numeric(5, 2),
-        default=18
-    )
+    
 
     stock_qty: Mapped[int] = mapped_column(
         Integer,
@@ -1007,9 +1004,7 @@ class OrderItem(Base):
         Numeric(12, 2)
     )
 
-    gst_percent: Mapped[Decimal] = mapped_column(
-        Numeric(5, 2)
-    )
+   
 
     gst_amount: Mapped[Decimal] = mapped_column(
         Numeric(12, 2)
@@ -1448,9 +1443,7 @@ class StoreSetting(Base):
         default=0
     )
 
-    gst_percentage: Mapped[Decimal | None] = mapped_column(
-        Numeric(5, 2)
-    )
+    
 
     cod_charge: Mapped[Decimal | None] = mapped_column(
         Numeric(10, 2)

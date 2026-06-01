@@ -6,6 +6,7 @@ from fastapi import (
     UploadFile,
     File,
     Form,
+    Query,
     status
 )
 
@@ -16,13 +17,12 @@ from app.core.dependencies import get_current_admin
 
 from app.schemas.admin.product_schema import (
     ProductCreate,
-    ProductUpdate,
-    ProductResponse
+    ProductUpdate
 )
 
-from app.schemas.admin.common_schema import ApiResponse
-
-from app.services.admin.product_service import ProductService
+from app.services.admin.product_service import (
+    ProductService
+)
 
 router = APIRouter(
     prefix="/admin/products",
@@ -30,9 +30,12 @@ router = APIRouter(
 )
 
 
+# =====================================================
+# CREATE PRODUCT
+# =====================================================
+
 @router.post(
     "",
-    response_model=ApiResponse,
     status_code=status.HTTP_201_CREATED
 )
 async def create_product(
@@ -44,7 +47,6 @@ async def create_product(
     short_description: str | None = Form(None),
     mrp: float = Form(...),
     sale_price: float = Form(...),
-    gst_percent: float = Form(18),
     stock_qty: int = Form(0),
     manufacturer: str | None = Form(None),
     hsn_code: str | None = Form(None),
@@ -65,7 +67,6 @@ async def create_product(
         short_description=short_description,
         mrp=mrp,
         sale_price=sale_price,
-        gst_percent=gst_percent,
         stock_qty=stock_qty,
         manufacturer=manufacturer,
         hsn_code=hsn_code,
@@ -74,69 +75,69 @@ async def create_product(
         is_new_arrival=is_new_arrival
     )
 
-    product = await ProductService.create_product(
-        db,
-        payload,
-        images
-    )
-
-    return ApiResponse(
-        success=True,
-        status_code=201,
-        message="Product created successfully",
-        data=ProductResponse.model_validate(product)
+    return await ProductService.create_product(
+        db=db,
+        payload=payload,
+        images=images
     )
 
 
-@router.get(
-    "",
-    response_model=ApiResponse
-)
+# =====================================================
+# GET ALL PRODUCTS
+# =====================================================
+
+@router.get("")
 async def get_products(
+    page: int = Query(
+        1,
+        ge=1
+    ),
+    page_size: int = Query(
+        20,
+        ge=1,
+        le=100
+    ),
+    search: str | None = Query(
+        None
+    ),
+    category_id: UUID | None = Query(
+        None
+    ),
     db: AsyncSession = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
 
-    products = await ProductService.get_products(db)
-
-    return ApiResponse(
-        success=True,
-        status_code=200,
-        message="Products fetched successfully",
-        data=[
-            ProductResponse.model_validate(product)
-            for product in products
-        ]
+    return await ProductService.get_products(
+        db=db,
+        page=page,
+        page_size=page_size,
+        search=search,
+        category_id=category_id
     )
 
 
-@router.get(
-    "/{product_id}",
-    response_model=ApiResponse
-)
+# =====================================================
+# GET PRODUCT DETAILS
+# =====================================================
+
+@router.get("/{product_id}")
 async def get_product(
     product_id: UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
 
-    product = await ProductService.get_product(
-        db,
-        product_id
-    )
-
-    return ApiResponse(
-        success=True,
-        status_code=200,
-        message="Product fetched successfully",
-        data=ProductResponse.model_validate(product)
+    return await ProductService.get_product(
+        db=db,
+        product_id=product_id
     )
 
 
-@router.put(
-    "/{product_id}",
-    response_model=ApiResponse
-)
+# =====================================================
+# UPDATE PRODUCT
+# =====================================================
+
+@router.put("/{product_id}")
 async def update_product(
     product_id: UUID,
     category_id: UUID | None = Form(None),
@@ -147,7 +148,6 @@ async def update_product(
     short_description: str | None = Form(None),
     mrp: float | None = Form(None),
     sale_price: float | None = Form(None),
-    gst_percent: float | None = Form(None),
     stock_qty: int | None = Form(None),
     manufacturer: str | None = Form(None),
     hsn_code: str | None = Form(None),
@@ -168,7 +168,6 @@ async def update_product(
         short_description=short_description,
         mrp=mrp,
         sale_price=sale_price,
-        gst_percent=gst_percent,
         stock_qty=stock_qty,
         manufacturer=manufacturer,
         hsn_code=hsn_code,
@@ -177,39 +176,26 @@ async def update_product(
         is_new_arrival=is_new_arrival
     )
 
-    product = await ProductService.update_product(
-        db,
-        product_id,
-        payload,
-        images
-    )
-
-    return ApiResponse(
-        success=True,
-        status_code=200,
-        message="Product updated successfully",
-        data=ProductResponse.model_validate(product)
+    return await ProductService.update_product(
+        db=db,
+        product_id=product_id,
+        payload=payload,
+        images=images
     )
 
 
-@router.delete(
-    "/{product_id}",
-    response_model=ApiResponse
-)
+# =====================================================
+# DELETE PRODUCT
+# =====================================================
+
+@router.delete("/{product_id}")
 async def delete_product(
     product_id: UUID,
     db: AsyncSession = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
 
-    await ProductService.delete_product(
-        db,
-        product_id
-    )
-
-    return ApiResponse(
-        success=True,
-        status_code=200,
-        message="Product deleted successfully",
-        data=None
+    return await ProductService.delete_product(
+        db=db,
+        product_id=product_id
     )

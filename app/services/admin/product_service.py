@@ -34,6 +34,38 @@ from app.storage.bluehost import (
 class ProductService:
 
     @staticmethod
+    def get_stock_status(
+        stock_qty: int
+    ):
+
+        if stock_qty <= 0:
+            return "Out of Stock"
+
+        if stock_qty <= 10:
+            return "Limited Stock"
+
+        return "In Stock"
+
+    @staticmethod
+    def calculate_discount(
+        mrp,
+        sale_price
+    ):
+
+        if float(mrp) <= 0:
+            return 0
+
+        return round(
+            (
+                (
+                    float(mrp)
+                    - float(sale_price)
+                )
+                / float(mrp)
+            ) * 100
+        )
+
+    @staticmethod
     async def create_product(
         db: AsyncSession,
         payload,
@@ -93,8 +125,6 @@ class ProductService:
             mrp=payload.mrp,
             sale_price=payload.sale_price,
 
-            gst_percent=payload.gst_percent,
-
             stock_qty=payload.stock_qty,
 
             manufacturer=payload.manufacturer,
@@ -110,7 +140,7 @@ class ProductService:
             product
         )
 
-        uploaded_images = []
+        image_records = []
 
         thumbnail_url = None
 
@@ -123,7 +153,7 @@ class ProductService:
             if index == 0:
                 thumbnail_url = image_url
 
-            uploaded_images.append(
+            image_records.append(
                 ProductImage(
                     product_id=product.id,
                     image_url=image_url,
@@ -134,7 +164,7 @@ class ProductService:
 
         await ProductImageRepository.bulk_create(
             db,
-            uploaded_images
+            image_records
         )
 
         product.thumbnail_url = thumbnail_url
@@ -144,10 +174,163 @@ class ProductService:
             product
         )
 
-        return await ProductRepository.get_by_id(
-            db,
-            product.id
+        return {
+            "success": True,
+            "status_code": 201,
+            "message": "Product created successfully",
+            "data": {
+                "id": str(product.id),
+                "name": product.name,
+                "sku": product.sku
+            }
+        }
+
+    @staticmethod
+    async def get_products(
+        db: AsyncSession,
+        page: int,
+        page_size: int,
+        search: str | None = None,
+        category_id: UUID | None = None
+    ):
+
+        products, total_records = (
+            await ProductRepository.get_products(
+                db=db,
+                page=page,
+                page_size=page_size,
+                search=search,
+                category_id=category_id
+            )
         )
+
+        total_pages = (
+            (total_records + page_size - 1)
+            // page_size
+        ) if total_records else 0
+
+        data = []
+
+        for product in products:
+
+            if product.stock_qty <= 0:
+                stock_status = "Out of Stock"
+            elif product.stock_qty <= 10:
+                stock_status = "Limited Stock"
+            else:
+                stock_status = "In Stock"
+
+            discount_percentage = 0
+
+            if (
+                product.mrp
+                and product.sale_price
+                and float(product.mrp) > 0
+            ):
+                discount_percentage = round(
+                    (
+                        (
+                            float(product.mrp)
+                            - float(product.sale_price)
+                        )
+                        / float(product.mrp)
+                    ) * 100
+                )
+
+            data.append(
+                {
+                    "id": str(product.id),
+
+                    "category_id": (
+                        str(product.category_id)
+                        if product.category_id
+                        else None
+                    ),
+
+                    "category_name": (
+                        product.category.name
+                        if product.category
+                        else None
+                    ),
+
+                    "name": product.name,
+                    "slug": product.slug,
+                    "sku": product.sku,
+                    "brand": product.brand,
+
+                    "short_description":
+                    product.short_description,
+
+                    "mrp": str(product.mrp),
+
+                    "sale_price": str(
+                        product.sale_price
+                    ),
+
+                    "discount_percentage":
+                    discount_percentage,
+
+                    "stock_qty":
+                    product.stock_qty,
+
+                    "stock_status":
+                    stock_status,
+
+                    "thumbnail_url":
+                    product.thumbnail_url,
+
+                    "rating": 0,
+                    "review_count": 0,
+
+                    "is_featured":
+                    product.is_featured,
+
+                    "is_bestseller":
+                    product.is_bestseller,
+
+                    "is_new_arrival":
+                    product.is_new_arrival,
+
+                    "created_at":
+                    product.created_at,
+
+                    "images": [
+                        {
+                            "id": str(img.id),
+                            "image_url": img.image_url,
+                            "is_primary": img.is_primary,
+                            "sort_order": img.sort_order
+                        }
+                        for img in product.images
+                    ]
+                }
+            )
+
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Products fetched successfully",
+
+            "filters": {
+                "search": search,
+                "category_id": (
+                    str(category_id)
+                    if category_id
+                    else None
+                )
+            },
+
+            "data": data,
+
+            "pagination": {
+                "current_page": page,
+                "page_size": page_size,
+                "total_records": total_records,
+                "total_pages": total_pages,
+                "has_next": page < total_pages,
+                "has_previous": page > 1
+            }
+        }
 
     @staticmethod
     async def get_product(
@@ -166,16 +349,92 @@ class ProductService:
                 detail="Product not found"
             )
 
-        return product
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Product fetched successfully",
+            "data": {
+                "id": str(product.id),
 
-    @staticmethod
-    async def get_products(
-        db: AsyncSession
-    ):
+                "category_id": (
+                    str(product.category_id)
+                    if product.category_id
+                    else None
+                ),
 
-        return await ProductRepository.get_all(
-            db
-        )
+                "category_name": (
+                    product.category.name
+                    if product.category
+                    else None
+                ),
+
+                "name": product.name,
+                "slug": product.slug,
+                "sku": product.sku,
+
+                "brand": product.brand,
+
+                "description":
+                product.description,
+
+                "short_description":
+                product.short_description,
+
+                "mrp": str(product.mrp),
+
+                "sale_price": str(
+                    product.sale_price
+                ),
+
+                "discount_percentage":
+                ProductService.calculate_discount(
+                    product.mrp,
+                    product.sale_price
+                ),
+
+                "stock_qty":
+                product.stock_qty,
+
+                "stock_status":
+                ProductService.get_stock_status(
+                    product.stock_qty
+                ),
+
+                "thumbnail_url":
+                product.thumbnail_url,
+
+                "manufacturer":
+                product.manufacturer,
+
+                "hsn_code":
+                product.hsn_code,
+
+                "rating": 0,
+                "review_count": 0,
+
+                "is_featured":
+                product.is_featured,
+
+                "is_bestseller":
+                product.is_bestseller,
+
+                "is_new_arrival":
+                product.is_new_arrival,
+
+                "created_at":
+                product.created_at,
+
+                "images": [
+                    {
+                        "id": str(img.id),
+                        "image_url": img.image_url,
+                        "is_primary": img.is_primary,
+                        "sort_order": img.sort_order
+                    }
+                    for img in product.images
+                ]
+            }
+        }
 
     @staticmethod
     async def update_product(
@@ -218,12 +477,6 @@ class ProductService:
 
         if images:
 
-            if len(images) > 6:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Maximum 6 images allowed"
-                )
-
             await ProductImageRepository.delete_product_images(
                 db,
                 product.id
@@ -263,10 +516,11 @@ class ProductService:
             product
         )
 
-        return await ProductRepository.get_by_id(
-            db,
-            product.id
-        )
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Product updated successfully"
+        }
 
     @staticmethod
     async def delete_product(
@@ -285,7 +539,13 @@ class ProductService:
                 detail="Product not found"
             )
 
-        return await ProductRepository.delete(
+        await ProductRepository.delete(
             db,
             product
         )
+
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Product deleted successfully"
+        }

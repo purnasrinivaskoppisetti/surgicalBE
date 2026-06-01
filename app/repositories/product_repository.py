@@ -1,28 +1,25 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import (
+    select,
+    func,
+    or_
+)
+
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy.orm import joinedload
+
 from app.models.models import (
     Product,
+    ProductImage,
     Category,
     ProductStatus
 )
-from app.models.models import (
-    Product,
-    ProductImage
-)
-from sqlalchemy import select, func
-from uuid import UUID
-from sqlalchemy.orm import Session
-from sqlalchemy.orm import joinedload
-
-from app.models.models import Product, ProductStatus
 
 
 class ProductRepository:
 
-    
     @staticmethod
     async def create(
         db: AsyncSession,
@@ -45,7 +42,9 @@ class ProductRepository:
         result = await db.execute(
             select(Product)
             .options(
-                joinedload(Product.images)
+                joinedload(Product.images),
+                joinedload(Product.category),
+                joinedload(Product.specifications)
             )
             .where(
                 Product.id == product_id,
@@ -62,7 +61,8 @@ class ProductRepository:
     ):
 
         result = await db.execute(
-            select(Product).where(
+            select(Product)
+            .where(
                 Product.sku == sku,
                 Product.is_deleted == False
             )
@@ -77,7 +77,8 @@ class ProductRepository:
     ):
 
         result = await db.execute(
-            select(Product).where(
+            select(Product)
+            .where(
                 Product.slug == slug,
                 Product.is_deleted == False
             )
@@ -93,7 +94,8 @@ class ProductRepository:
         result = await db.execute(
             select(Product)
             .options(
-                joinedload(Product.images)
+                joinedload(Product.images),
+                joinedload(Product.category)
             )
             .where(
                 Product.is_deleted == False
@@ -129,30 +131,6 @@ class ProductRepository:
         return True
 
     @staticmethod
-    async def get_paginated(
-        db: AsyncSession,
-        skip: int,
-        limit: int
-    ):
-
-        result = await db.execute(
-            select(Product)
-            .options(
-                joinedload(Product.images)
-            )
-            .where(
-                Product.is_deleted == False
-            )
-            .offset(skip)
-            .limit(limit)
-            .order_by(
-                Product.created_at.desc()
-            )
-        )
-
-        return result.unique().scalars().all()
-
-    @staticmethod
     async def create_image(
         db: AsyncSession,
         image: ProductImage
@@ -176,10 +154,6 @@ class ProductRepository:
         await db.commit()
 
         return images
-    
-
-
-
 
     @staticmethod
     async def get_products(
@@ -202,7 +176,11 @@ class ProductRepository:
 
         query = (
             select(Product)
-            .join(Category, Product.category_id == Category.id, isouter=True)
+            .join(
+                Category,
+                Product.category_id == Category.id,
+                isouter=True
+            )
             .options(
                 joinedload(Product.images),
                 joinedload(Product.category)
@@ -222,35 +200,59 @@ class ProductRepository:
                 Category.name.ilike(f"%{search}%")
             )
 
-            query = query.where(search_filter)
+            query = query.where(
+                search_filter
+            )
 
         count_query = (
             select(func.count(Product.id))
-            .join(Category, Product.category_id == Category.id, isouter=True)
+            .join(
+                Category,
+                Product.category_id == Category.id,
+                isouter=True
+            )
             .where(*conditions)
         )
 
         if search:
-            count_query = count_query.where(search_filter)
+            count_query = count_query.where(
+                search_filter
+            )
 
-        total_records = await db.scalar(count_query)
+        total_records = await db.scalar(
+            count_query
+        )
 
         result = await db.execute(
             query
-            .order_by(Product.created_at.desc())
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+            .order_by(
+                Product.created_at.desc()
+            )
+            .offset(
+                (page - 1) * page_size
+            )
+            .limit(
+                page_size
+            )
         )
 
-        products = result.unique().scalars().all()
+        products = (
+            result.unique()
+            .scalars()
+            .all()
+        )
 
-        return products, total_records
+        return (
+            products,
+            total_records
+        )
 
     @staticmethod
     async def get_product_by_id(
         db: AsyncSession,
         product_id: UUID
     ):
+
         result = await db.execute(
             select(Product)
             .options(
