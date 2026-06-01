@@ -174,7 +174,6 @@ class ProductService:
                 "sale_price": str(product.sale_price),
                 "discount_percentage": discount_percentage,
 
-                "gst_percent": str(product.gst_percent),
 
                 "stock_qty": product.stock_qty,
                 "stock_status": stock_status,

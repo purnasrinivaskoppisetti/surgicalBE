@@ -39,6 +39,9 @@ class ProductListResponse(BaseModel):
     is_new_arrival: bool
     created_at: datetime
 
+    class Config:
+        from_attributes = True
+
 
 class ProductDetailResponse(BaseModel):
     id: str
@@ -47,15 +50,19 @@ class ProductDetailResponse(BaseModel):
     slug: str
     sku: str
     brand: Optional[str]
+
     description: Optional[str]
     short_description: Optional[str]
+
     mrp: float
     sale_price: float
-    gst_percent: float
+
     stock_qty: int
     thumbnail_url: Optional[str]
+
     manufacturer: Optional[str]
     hsn_code: Optional[str]
+
     is_featured: bool
     is_bestseller: bool
     is_new_arrival: bool
