@@ -2,6 +2,7 @@ from uuid import UUID
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
+from app.repositories.category_repository import CategoryRepository
 
 from app.repositories.product_repository import ProductRepository
 from app.utils.pagination import build_pagination
@@ -49,53 +50,59 @@ class ProductService:
                 stock_status = "In Stock"
 
             response_data.append(
-                {
-                    "id": str(product.id),
+                                    {
+                                        "id": str(product.id),
 
-                    "category_id": str(product.category_id)
-                    if product.category_id else None,
+                                        "category_id": str(product.category_id)
+                                        if product.category_id else None,
 
-                    "category_name": (
-                        product.category.name
-                        if product.category
-                        else None
-                    ),
+                                        "category_name": (
+                                            product.category.name
+                                            if product.category
+                                            else None
+                                        ),
 
-                    "name": product.name,
-                    "slug": product.slug,
-                    "sku": product.sku,
-                    "brand": product.brand,
-                    "short_description": product.short_description,
+                                        "category_slug": (
+                                            product.category.slug
+                                            if product.category
+                                            else None
+                                        ),
 
-                    "mrp": str(product.mrp),
-                    "sale_price": str(product.sale_price),
-                    "discount_percentage": discount_percentage,
+                                        "name": product.name,
+                                        "slug": product.slug,
+                                        "sku": product.sku,
+                                        "brand": product.brand,
+                                        "short_description": product.short_description,
 
-                    "stock_qty": product.stock_qty,
-                    "stock_status": stock_status,
+                                        "mrp": str(product.mrp),
+                                        "sale_price": str(product.sale_price),
+                                        "discount_percentage": discount_percentage,
 
-                    "thumbnail_url": product.thumbnail_url,
+                                        "stock_qty": product.stock_qty,
+                                        "stock_status": stock_status,
 
-                    "rating": str(product.rating),
-                    "review_count": product.review_count,
+                                        "thumbnail_url": product.thumbnail_url,
 
-                    "is_featured": product.is_featured,
-                    "is_bestseller": product.is_bestseller,
-                    "is_new_arrival": product.is_new_arrival,
+                                        "rating": str(product.rating),
+                                        "review_count": product.review_count,
 
-                    "created_at": product.created_at,
+                                        "is_featured": product.is_featured,
+                                        "is_bestseller": product.is_bestseller,
+                                        "is_new_arrival": product.is_new_arrival,
 
-                    "images": [
-                        {
-                            "id": str(img.id),
-                            "image_url": img.image_url,
-                            "is_primary": img.is_primary,
-                            "sort_order": img.sort_order
-                        }
-                        for img in product.images
-                    ]
-                }
-            )
+                                        "created_at": product.created_at,
+
+                                        "images": [
+                                            {
+                                                "id": str(img.id),
+                                                "image_url": img.image_url,
+                                                "is_primary": img.is_primary,
+                                                "sort_order": img.sort_order
+                                            }
+                                            for img in product.images
+                                        ]
+                                    }
+                                )
 
         return {
             "success": True,

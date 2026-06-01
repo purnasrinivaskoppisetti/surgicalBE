@@ -19,7 +19,8 @@ class CategoryService:
             "data": [
                 {
                     "id": str(category.id),
-                    "name": category.name
+                    "name": category.name,
+                    "slug": category.slug
                 }
                 for category in categories
             ]
