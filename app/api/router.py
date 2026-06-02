@@ -13,6 +13,8 @@ from app.api.routes.store.category_routes import router as store_category_router
 from app.api.routes.customer.address_routes import router as address_router
 from app.api.routes.customer.wishlist_routes import router as wishlist_router
 from app.api.routes.customer.cart_routes import router as cart_router
+
+
 '''from app.api.routes.admin.dashboard_routes import router as dashboard_router
 from app.api.routes.admin.inventory_routes import router as inventory_router
 from app.api.routes.admin.order_routes import router as admin_order_router
@@ -58,6 +60,7 @@ api_router.include_router(address_router)
 api_router.include_router(wishlist_router)
 api_router.include_router(cart_router)
 api_router.include_router(coupon_routes)
+api_router.include_router(category_icon_routes)
 '''
 api_router.include_router(inventory_router)
 
