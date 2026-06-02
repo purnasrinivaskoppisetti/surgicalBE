@@ -11,8 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from slugify import slugify
 
 from app.models.models import Category
+
 from app.repositories.category_repository import (
     CategoryRepository
+)
+
+from app.utils.category_master import (
+    CATEGORY_MASTER
 )
 
 
@@ -42,6 +47,21 @@ class CategoryService:
                     detail="Category already exists"
                 )
 
+            selected_category = next(
+                (
+                    item
+                    for item in CATEGORY_MASTER
+                    if item["name"].lower() == name.lower()
+                ),
+                None
+            )
+
+            if not selected_category:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid category name"
+                )
+
             if parent_id:
 
                 parent = await CategoryRepository.get_by_id(
@@ -58,6 +78,7 @@ class CategoryService:
             category = Category(
                 name=name,
                 slug=slug,
+                icon=selected_category["icon"],
                 description=description,
                 parent_id=parent_id,
                 is_active=is_active
@@ -73,13 +94,13 @@ class CategoryService:
 
         except SQLAlchemyError as e:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=500,
                 detail=f"Database error: {str(e)}"
             )
 
         except Exception as e:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=500,
                 detail=str(e)
             )
 
@@ -89,47 +110,27 @@ class CategoryService:
         category_id: UUID
     ):
 
-        try:
+        category = await CategoryRepository.get_by_id(
+            db,
+            category_id
+        )
 
-            category = await CategoryRepository.get_by_id(
-                db,
-                category_id
-            )
-
-            if not category:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Category not found"
-                )
-
-            return category
-
-        except HTTPException:
-            raise
-
-        except Exception as e:
+        if not category:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
+                status_code=404,
+                detail="Category not found"
             )
+
+        return category
 
     @staticmethod
     async def get_categories(
         db: AsyncSession
     ):
 
-        try:
-
-            return await CategoryRepository.get_all(
-                db
-            )
-
-        except Exception as e:
-
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
+        return await CategoryRepository.get_all(
+            db
+        )
 
     @staticmethod
     async def update_category(
@@ -147,7 +148,7 @@ class CategoryService:
 
             if not category:
                 raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
+                    status_code=404,
                     detail="Category not found"
                 )
 
@@ -157,8 +158,10 @@ class CategoryService:
 
             if "name" in update_data:
 
+                new_name = update_data["name"]
+
                 slug = slugify(
-                    update_data["name"]
+                    new_name
                 )
 
                 existing = await CategoryRepository.get_by_slug(
@@ -171,16 +174,33 @@ class CategoryService:
                     existing.id != category.id
                 ):
                     raise HTTPException(
-                        status_code=status.HTTP_409_CONFLICT,
+                        status_code=409,
                         detail="Category name already exists"
                     )
 
-                category.name = update_data["name"]
+                selected_category = next(
+                    (
+                        item
+                        for item in CATEGORY_MASTER
+                        if item["name"].lower()
+                        == new_name.lower()
+                    ),
+                    None
+                )
+
+                if not selected_category:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid category name"
+                    )
+
+                category.name = new_name
                 category.slug = slug
+                category.icon = selected_category["icon"]
 
             if (
-                "parent_id" in update_data and
-                update_data["parent_id"]
+                "parent_id" in update_data
+                and update_data["parent_id"]
             ):
 
                 parent = await CategoryRepository.get_by_id(
@@ -190,17 +210,18 @@ class CategoryService:
 
                 if not parent:
                     raise HTTPException(
-                        status_code=status.HTTP_404_NOT_FOUND,
+                        status_code=404,
                         detail="Parent category not found"
                     )
 
-            for key, value in update_data.items():
+            if "description" in update_data:
+                category.description = update_data["description"]
 
-                setattr(
-                    category,
-                    key,
-                    value
-                )
+            if "parent_id" in update_data:
+                category.parent_id = update_data["parent_id"]
+
+            if "is_active" in update_data:
+                category.is_active = update_data["is_active"]
 
             return await CategoryRepository.update(
                 db,
@@ -212,13 +233,13 @@ class CategoryService:
 
         except SQLAlchemyError as e:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=500,
                 detail=f"Database error: {str(e)}"
             )
 
         except Exception as e:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=500,
                 detail=str(e)
             )
 
@@ -228,40 +249,24 @@ class CategoryService:
         category_id: UUID
     ):
 
-        try:
+        category = await CategoryRepository.get_by_id(
+            db,
+            category_id
+        )
 
-            category = await CategoryRepository.get_by_id(
-                db,
-                category_id
-            )
-
-            if not category:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="Category not found"
-                )
-
-            await CategoryRepository.delete(
-                db,
-                category
-            )
-
-            return {
-                "success": True,
-                "message": "Category deleted successfully"
-            }
-
-        except HTTPException:
-            raise
-
-        except SQLAlchemyError as e:
+        if not category:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Database error: {str(e)}"
+                status_code=404,
+                detail="Category not found"
             )
 
-        except Exception as e:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=str(e)
-            )
+        await CategoryRepository.delete(
+            db,
+            category
+        )
+
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Category deleted successfully"
+        }

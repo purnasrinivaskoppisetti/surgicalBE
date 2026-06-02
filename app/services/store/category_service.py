@@ -20,6 +20,7 @@ class CategoryService:
                 {
                     "id": str(category.id),
                     "name": category.name,
+                    "icon":category.icon,
                     "slug": category.slug
                 }
                 for category in categories

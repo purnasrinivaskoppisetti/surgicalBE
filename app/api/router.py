@@ -6,6 +6,8 @@ from app.api.routes.auth.auth_routes import router as auth_router
 # Admin
 from app.api.routes.admin.category_routes import router as admin_category_router
 from app.api.routes.admin.product_routes import router as admin_product_router
+from app.api.routes.admin.category_icon_routes import router as category_icon_routes
+from app.api.routes.admin.coupon_routes import router as coupon_routes
 from app.api.routes.store.product_routes import router as store_product_router
 from app.api.routes.store.category_routes import router as store_category_router
 from app.api.routes.customer.address_routes import router as address_router
@@ -55,8 +57,8 @@ api_router.include_router(store_category_router)
 api_router.include_router(address_router)
 api_router.include_router(wishlist_router)
 api_router.include_router(cart_router)
-'''api_router.include_router(dashboard_router)
-
+api_router.include_router(coupon_routes)
+'''
 api_router.include_router(inventory_router)
 
 api_router.include_router(admin_order_router)
