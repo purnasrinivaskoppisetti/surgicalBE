@@ -15,7 +15,7 @@ class CouponService:
 
         existing = await CouponRepository.get_by_code(
             db,
-            payload.code
+            payload.code.upper()
         )
 
         if existing:
@@ -29,7 +29,12 @@ class CouponService:
             code=payload.code.upper(),
             title=payload.title,
             description=payload.description,
-            coupon_type=payload.coupon_type,
+
+            # IMPORTANT
+            coupon_type=payload.coupon_type.value
+            if hasattr(payload.coupon_type, "value")
+            else payload.coupon_type,
+
             discount_value=payload.discount_value,
             max_discount_amount=payload.max_discount_amount,
             minimum_order_amount=payload.minimum_order_amount,
@@ -50,12 +55,15 @@ class CouponService:
             "message": "Coupon created successfully",
             "data": {
                 "id": str(coupon.id),
-                "code": coupon.code
+                "code": coupon.code,
+                "coupon_type": coupon.coupon_type
             }
         }
 
     @staticmethod
-    async def get_coupons(db):
+    async def get_coupons(
+        db
+    ):
 
         coupons = await CouponRepository.get_all(
             db
@@ -112,9 +120,20 @@ class CouponService:
                 "message": "Coupon not found"
             }
 
-        for key, value in payload.model_dump(
+        update_data = payload.model_dump(
             exclude_unset=True
-        ).items():
+        )
+
+        if "coupon_type" in update_data:
+            coupon_type = update_data["coupon_type"]
+
+            update_data["coupon_type"] = (
+                coupon_type.value
+                if hasattr(coupon_type, "value")
+                else coupon_type
+            )
+
+        for key, value in update_data.items():
 
             setattr(
                 coupon,

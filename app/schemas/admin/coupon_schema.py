@@ -4,31 +4,36 @@ from decimal import Decimal
 
 from pydantic import BaseModel
 
+from enum import Enum
+from pydantic import BaseModel
+from uuid import UUID
+from datetime import datetime
+
+
+class CouponType(str, Enum):
+    PERCENTAGE = "percentage"
+    FLAT = "flat"
+    FREE_SHIPPING = "free_shipping"
+
 
 class CouponCreate(BaseModel):
-
     code: str
     title: str
     description: str | None = None
 
-    coupon_type: str
+    coupon_type: CouponType
 
-    discount_value: Decimal
-
-    max_discount_amount: Decimal | None = None
-
-    minimum_order_amount: Decimal = 0
-
+    discount_value: float
+    max_discount_amount: float | None = None
+    minimum_order_amount: float = 0
     usage_limit: int | None = None
 
     is_first_order_only: bool = False
 
     valid_from: datetime
-
     valid_until: datetime
 
     product_ids: list[UUID] = []
-
     category_ids: list[UUID] = []
 
 
