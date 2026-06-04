@@ -5,6 +5,12 @@ from app.models.models import CartItem
 from app.repositories.cart_repository import (
     CartRepository
 )
+from decimal import Decimal
+
+from app.repositories.cart_repository import CartRepository
+from app.repositories.coupon_repository import CouponRepository
+from app.repositories.setting_repository import SettingRepository
+
 
 from app.repositories.product_repository import (
     ProductRepository
@@ -219,4 +225,266 @@ class CartService:
             "success": True,
             "status_code": 200,
             "message": "Product removed from cart"
+        }
+    
+
+
+
+
+
+    @staticmethod
+    async def get_cart_summary(
+        db,
+        user_id
+    ):
+
+        cart_items = (
+            await CartRepository.get_all_cart_items(
+                db=db,
+                user_id=user_id
+            )
+        )
+
+        if not cart_items:
+
+            return {
+                "success": True,
+                "status_code": 200,
+                "message": "Cart is empty",
+                "data": {
+                    "subtotal": 0,
+                    "shipping_charge": 0,
+                    "total_amount": 0,
+                    "available_coupons": []
+                }
+            }
+
+        subtotal = Decimal("0")
+
+        total_quantity = 0
+
+        for item in cart_items:
+
+            item_total = (
+                Decimal(str(item.product.sale_price))
+                * item.quantity
+            )
+
+            subtotal += item_total
+
+            total_quantity += item.quantity
+
+        # ------------------------
+        # DELIVERY CHARGE
+        # ------------------------
+
+        shipping_charge = Decimal("0")
+
+        settings = await SettingRepository.get_settings(
+            db
+        )
+
+        if settings:
+
+            delivery_charge = Decimal(
+                str(
+                    settings.delivery_charge or 0
+                )
+            )
+
+            free_shipping_threshold = Decimal(
+                str(
+                    settings.free_shipping_threshold or 0
+                )
+            )
+
+            if delivery_charge > 0:
+
+                if (
+                    free_shipping_threshold > 0
+                    and
+                    subtotal >= free_shipping_threshold
+                ):
+                    shipping_charge = Decimal("0")
+
+                else:
+                    shipping_charge = delivery_charge
+
+        total_amount = (
+            subtotal +
+            shipping_charge
+        )
+
+        # ------------------------
+        # COUPONS
+        # ------------------------
+
+        coupons = await CouponRepository.get_active_coupons(
+            db
+        )
+
+        coupon_list = []
+
+        for coupon in coupons:
+
+            is_applicable = True
+
+            reason = None
+
+            discount_amount = Decimal("0")
+
+            if (
+                subtotal <
+                coupon.minimum_order_amount
+            ):
+                is_applicable = False
+
+                reason = (
+                    f"Minimum order amount "
+                    f"{coupon.minimum_order_amount}"
+                )
+
+            if (
+                coupon.usage_limit
+                and
+                coupon.used_count >=
+                coupon.usage_limit
+            ):
+                is_applicable = False
+
+                reason = (
+                    "Coupon usage limit reached"
+                )
+
+            if is_applicable:
+
+                if (
+                    coupon.coupon_type.value
+                    == "percentage"
+                ):
+
+                    discount_amount = (
+                        subtotal *
+                        coupon.discount_value
+                    ) / Decimal("100")
+
+                    if (
+                        coupon.max_discount_amount
+                        and
+                        discount_amount >
+                        coupon.max_discount_amount
+                    ):
+                        discount_amount = (
+                            coupon.max_discount_amount
+                        )
+
+                elif (
+                    coupon.coupon_type.value
+                    == "flat"
+                ):
+
+                    discount_amount = (
+                        coupon.discount_value
+                    )
+
+                elif (
+                    coupon.coupon_type.value
+                    == "free_shipping"
+                ):
+
+                    discount_amount = (
+                        shipping_charge
+                    )
+
+            coupon_list.append(
+                {
+                    "coupon_id": str(coupon.id),
+                    "coupon_code": coupon.code,
+                    "coupon_title": coupon.title,
+                    "is_applicable": is_applicable,
+                    "reason": reason,
+                    "discount_amount": float(
+                        discount_amount
+                    ),
+                    "payable_amount": float(
+                        max(
+                            Decimal("0"),
+                            total_amount -
+                            discount_amount
+                        )
+                    )
+                }
+            )
+
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Order summary fetched successfully",
+            "data": {
+                "total_items": total_quantity,
+                "subtotal": float(subtotal),
+                "shipping_charge": float(
+                    shipping_charge
+                ),
+                "total_amount": float(
+                    total_amount
+                ),
+                "available_coupons": coupon_list
+            }
+        }
+
+
+    @staticmethod
+    async def apply_coupon(
+        db,
+        user_id,
+        coupon_code
+    ):
+
+        summary = await CartService.get_cart_summary(
+            db=db,
+            user_id=user_id
+        )
+
+        coupons = summary["data"]["available_coupons"]
+
+        selected_coupon = next(
+            (
+                coupon
+                for coupon in coupons
+                if coupon["coupon_code"] == coupon_code
+            ),
+            None
+        )
+
+        if not selected_coupon:
+
+            return {
+                "success": False,
+                "status_code": 404,
+                "message": "Coupon not found"
+            }
+
+        if not selected_coupon["is_applicable"]:
+
+            return {
+                "success": False,
+                "status_code": 400,
+                "message": "Coupon is not applicable",
+                "data": {
+                    "coupon_code": selected_coupon["coupon_code"],
+                    "reason": selected_coupon["reason"]
+                }
+            }
+
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Coupon applied successfully",
+            "data": {
+                "coupon_id": selected_coupon["coupon_id"],
+                "coupon_code": selected_coupon["coupon_code"],
+                "discount_amount": selected_coupon["discount_amount"],
+                "payable_amount": selected_coupon["payable_amount"]
+            }
         }

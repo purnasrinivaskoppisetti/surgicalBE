@@ -5,6 +5,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Coupon
 
+from datetime import datetime
+
+from sqlalchemy import select
+
+from app.models.models import Coupon
+
 
 class CouponRepository:
 
@@ -81,3 +87,37 @@ class CouponRepository:
         await db.delete(coupon)
 
         await db.commit()
+
+
+
+
+    @staticmethod
+    async def get_active_coupons(db):
+
+        result = await db.execute(
+            select(Coupon)
+            .where(
+                Coupon.is_active == True,
+                Coupon.valid_from <= datetime.utcnow(),
+                Coupon.valid_until >= datetime.utcnow()
+            )
+        )
+
+        return result.scalars().all()
+    
+
+
+    @staticmethod
+    async def get_by_code(
+        db,
+        coupon_code: str
+    ):
+
+        result = await db.execute(
+            select(Coupon)
+            .where(
+                Coupon.code == coupon_code
+            )
+        )
+
+        return result.scalar_one_or_none()

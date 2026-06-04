@@ -3,7 +3,10 @@ from uuid import UUID
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import Query
-
+from app.schemas.customer.cart_schema import (
+    AddToCartRequest,
+    ApplyCouponRequest
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
@@ -26,7 +29,7 @@ router = APIRouter(
 )
 
 
-@router.post("/{product_id}")
+@router.post("/add/{product_id}")
 async def add_to_cart(
     product_id: UUID,
     payload: AddToCartRequest,
@@ -58,7 +61,7 @@ async def get_cart(
     )
 
 
-@router.delete("/{product_id}")
+@router.delete("/remove/{product_id}")
 async def remove_from_cart(
     product_id: UUID,
     db: AsyncSession = Depends(get_db),
@@ -69,4 +72,28 @@ async def remove_from_cart(
         db=db,
         user_id=current_user["sub"],
         product_id=product_id
+    )
+
+@router.get("/summary")
+async def get_cart_summary(
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return await CartService.get_cart_summary(
+        db=db,
+        user_id=current_user["sub"]
+    )
+
+@router.post("/apply-coupon")
+async def apply_coupon(
+    payload: ApplyCouponRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    return await CartService.apply_coupon(
+        db=db,
+        user_id=current_user["sub"],
+        coupon_code=payload.coupon_code
     )

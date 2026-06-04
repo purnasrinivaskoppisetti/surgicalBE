@@ -1,4 +1,5 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
+from pydantic import Field
 
 
 class AddToCartRequest(BaseModel):
@@ -7,3 +8,8 @@ class AddToCartRequest(BaseModel):
         default=1,
         ge=1
     )
+
+
+class ApplyCouponRequest(BaseModel):
+
+    coupon_code: str

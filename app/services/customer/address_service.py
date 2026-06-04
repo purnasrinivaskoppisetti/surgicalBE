@@ -3,37 +3,187 @@ from app.repositories.address_repository import AddressRepository
 
 
 class AddressService:
-
-    @staticmethod
-    async def create_address(
-        db,
-        user_id,
-        payload
-    ):
-
-        address = Address(
-            user_id=user_id,
-            full_name=payload.full_name,
-            phone=payload.phone,
-            address_line1=payload.address_line1,
-            address_line2=payload.address_line2,
-            city=payload.city,
-            state=payload.state,
-            pincode=payload.pincode,
-            country=payload.country,
-            is_default=payload.is_default
-        )
-
-        address = await AddressRepository.create(
+        @staticmethod
+        async def create_address(
             db,
-            address
-        )
+            user_id,
+            payload
+        ):
 
-        return {
-            "success": True,
-            "status_code": 201,
-            "message": "Address created successfully",
-            "data": {
-                "id": str(address.id)
+            address = Address(
+                user_id=user_id,
+                full_name=payload.full_name,
+                email=payload.email,
+                phone=payload.phone,
+                address_line1=payload.address_line1,
+                address_line2=payload.address_line2,
+                landmark=payload.landmark,
+                city=payload.city,
+                state=payload.state,
+                pincode=payload.pincode,
+                country=payload.country,
+                address_type=payload.address_type,
+                is_default=payload.is_default
+            )
+
+            address = await AddressRepository.create(
+                db,
+                address
+            )
+
+            return {
+                "success": True,
+                "status_code": 201,
+                "message": "Address created successfully",
+                "data": {
+                    "id": str(address.id)
+                }
             }
-        }
+
+        @staticmethod
+        async def get_addresses(
+            db,
+            user_id
+        ):
+
+            addresses = await (
+                AddressRepository.get_user_addresses(
+                    db,
+                    user_id
+                )
+            )
+
+            return {
+                "success": True,
+                "status_code": 200,
+                "data": [
+                    {
+                        "id": str(address.id),
+                        "full_name": address.full_name,
+                        "phone": address.phone,
+                        "address_line1": address.address_line1,
+                        "address_line2": address.address_line2,
+                        "city": address.city,
+                        "state": address.state,
+                        "pincode": address.pincode,
+                        "country": address.country,
+                        "is_default": address.is_default
+                    }
+                    for address in addresses
+                ]
+            }
+
+        @staticmethod
+        async def get_address(
+            db,
+            user_id,
+            address_id
+        ):
+
+            address = await (
+                AddressRepository.get_by_id(
+                    db,
+                    address_id,
+                    user_id
+                )
+            )
+
+            if not address:
+                return {
+                    "success": False,
+                    "status_code": 404,
+                    "message": "Address not found"
+                }
+
+            return {
+                "success": True,
+                "data": {
+                    "id": str(address.id),
+                    "full_name": address.full_name,
+                    "phone": address.phone,
+                    "address_line1": address.address_line1,
+                    "address_line2": address.address_line2,
+                    "city": address.city,
+                    "state": address.state,
+                    "pincode": address.pincode,
+                    "country": address.country,
+                    "is_default": address.is_default
+                }
+            }
+
+        @staticmethod
+        async def update_address(
+            db,
+            user_id,
+            address_id,
+            payload
+        ):
+
+            address = await (
+                AddressRepository.get_by_id(
+                    db,
+                    address_id,
+                    user_id
+                )
+            )
+
+            if not address:
+                return {
+                    "success": False,
+                    "status_code": 404,
+                    "message": "Address not found"
+                }
+
+            address.full_name = payload.full_name
+            address.phone = payload.phone
+            address.address_line1 = payload.address_line1
+            address.address_line2 = payload.address_line2
+            address.city = payload.city
+            address.state = payload.state
+            address.pincode = payload.pincode
+            address.country = payload.country
+            address.is_default = payload.is_default
+
+            await AddressRepository.update(
+                db,
+                address
+            )
+
+            return {
+                "success": True,
+                "status_code": 200,
+                "message": "Address updated successfully"
+            }
+
+        @staticmethod
+        async def delete_address(
+            db,
+            user_id,
+            address_id
+        ):
+
+            address = await (
+                AddressRepository.get_by_id(
+                    db,
+                    address_id,
+                    user_id
+                )
+            )
+
+            if not address:
+                return {
+                    "success": False,
+                    "status_code": 404,
+                    "message": "Address not found"
+                }
+
+            await AddressRepository.delete(
+                db,
+                address
+            )
+
+            return {
+                "success": True,
+                "status_code": 200,
+                "message": "Address deleted successfully"
+            }

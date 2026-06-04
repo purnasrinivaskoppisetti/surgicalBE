@@ -11,6 +11,12 @@ from app.models.models import (
     CartItem,
     Product
 )
+from sqlalchemy import select
+from sqlalchemy.orm import joinedload
+
+
+
+
 
 
 class CartRepository:
@@ -106,3 +112,26 @@ class CartRepository:
         await db.delete(cart_item)
 
         await db.commit()
+
+
+    @staticmethod
+    async def get_all_cart_items(
+        db,
+        user_id
+    ):
+
+        result = await db.execute(
+            select(CartItem)
+            .options(
+                joinedload(CartItem.product)
+                .joinedload(Product.category),
+
+                joinedload(CartItem.product)
+                .joinedload(Product.images)
+            )
+            .where(
+                CartItem.user_id == user_id
+            )
+        )
+
+        return result.unique().scalars().all()
