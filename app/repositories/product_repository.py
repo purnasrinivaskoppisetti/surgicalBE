@@ -252,22 +252,18 @@ class ProductRepository:
         )
 
     @staticmethod
-    async def get_product_by_id(
+    async def get_by_id(
         db: AsyncSession,
         product_id: UUID
     ):
 
         result = await db.execute(
             select(Product)
-            .options(
-                joinedload(Product.images),
-                joinedload(Product.specifications),
-                joinedload(Product.category)
-            )
             .where(
                 Product.id == product_id,
-                Product.is_deleted == False
+                Product.is_deleted == False,
+                Product.status == ProductStatus.ACTIVE
             )
         )
 
-        return result.unique().scalar_one_or_none()
+        return result.scalar_one_or_none()

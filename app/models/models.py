@@ -23,6 +23,7 @@ class ReviewStatus(str, Enum):
     REJECTED = "rejected"
     FLAGGED = "flagged"
 
+
 class ProductStatus(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
