@@ -143,13 +143,18 @@ class ProductService:
                 ) * 100
             )
 
-        # STOCK STATUS
         if product.stock_qty == 0:
             stock_status = "Out of Stock"
         elif product.stock_qty <= 10:
             stock_status = "Limited Stock"
         else:
             stock_status = "In Stock"
+
+        approved_reviews = [
+            review
+            for review in product.reviews
+            if review.status.value == "approved"
+        ]
 
         return {
             "success": True,
@@ -180,7 +185,6 @@ class ProductService:
                 "mrp": str(product.mrp),
                 "sale_price": str(product.sale_price),
                 "discount_percentage": discount_percentage,
-
 
                 "stock_qty": product.stock_qty,
                 "stock_status": stock_status,
@@ -216,6 +220,30 @@ class ProductService:
                         "spec_value": spec.spec_value
                     }
                     for spec in product.specifications
+                ],
+
+                "reviews": [
+                    {
+                        "id": str(review.id),
+
+                        "user": {
+                            "id": str(review.user.id),
+                            "name": review.user.full_name
+                        },
+
+                        "rating": review.rating,
+
+                        "review_text": review.review_text,
+
+                        "image_url": review.image_url,
+
+                        "is_verified_purchase":
+                            review.is_verified_purchase,
+
+                        "created_at":
+                            review.created_at
+                    }
+                    for review in approved_reviews
                 ],
 
                 "created_at": product.created_at,

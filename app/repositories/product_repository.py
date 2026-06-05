@@ -14,7 +14,9 @@ from app.models.models import (
     Product,
     ProductImage,
     Category,
-    ProductStatus
+    ProductStatus,
+    Review,
+    User
 )
 
 
@@ -34,7 +36,7 @@ class ProductRepository:
         return product
 
     @staticmethod
-    async def get_by_id(
+    async def get_product_by_id(
         db: AsyncSession,
         product_id: UUID
     ):
@@ -44,7 +46,9 @@ class ProductRepository:
             .options(
                 joinedload(Product.images),
                 joinedload(Product.category),
-                joinedload(Product.specifications)
+                joinedload(Product.specifications),
+                joinedload(Product.reviews)
+                .joinedload(Review.user)
             )
             .where(
                 Product.id == product_id,

@@ -3,13 +3,12 @@ from fastapi import (
     Depends
 )
 
-from sqlalchemy.ext.asyncio import (
-    AsyncSession
-)
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.database import (
-    get_db
-)
+from app.core.database import get_db
+from app.core.dependencies import get_current_admin
+
+from app.schemas.admin.common_schema import ApiResponse
 
 from app.services.admin.inventory_service import (
     InventoryService
@@ -21,15 +20,22 @@ router = APIRouter(
 )
 
 
-@router.get("")
+@router.get(
+    "",
+    response_model=ApiResponse
+)
 async def get_inventory(
-    db: AsyncSession = Depends(get_db)
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(get_current_admin)
 ):
 
-    return {
-        "success": True,
-        "status_code": 200,
-        "data": await InventoryService.get_inventory_dashboard(
-            db
-        )
-    }
+    inventory = await InventoryService.get_inventory_dashboard(
+        db
+    )
+
+    return ApiResponse(
+        success=True,
+        status_code=200,
+        message="Inventory dashboard fetched successfully",
+        data=inventory
+    )

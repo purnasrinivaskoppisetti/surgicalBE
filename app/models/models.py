@@ -17,6 +17,12 @@ class UserRole(str, Enum):
     CUSTOMER = "customer"
     ADMIN = "admin"
 
+class ReviewStatus(str, Enum):
+    PENDING = "pending"
+    APPROVED = "approved"
+    REJECTED = "rejected"
+    FLAGGED = "flagged"
+
 class ProductStatus(str, Enum):
     ACTIVE = "active"
     INACTIVE = "inactive"
@@ -189,7 +195,14 @@ class ProductSpecification(Base):
 
 class Review(Base):
     __tablename__ = "reviews"
-    __table_args__ = (CheckConstraint("rating >= 1 AND rating <= 5", name="review_rating_check"),)
+
+    __table_args__ = (
+        CheckConstraint(
+            "rating >= 1 AND rating <= 5",
+            name="review_rating_check"
+        ),
+    )
+
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=generate_uuid)
     product_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
@@ -197,10 +210,38 @@ class Review(Base):
     review_text: Mapped[str | None] = mapped_column(Text)
     image_url: Mapped[str | None] = mapped_column(Text)
     is_verified_purchase: Mapped[bool] = mapped_column(Boolean, default=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
-    user = relationship("User", back_populates="reviews")
-    product = relationship("Product", back_populates="reviews")
+
+    status: Mapped[ReviewStatus] = mapped_column(
+        SQLEnum(ReviewStatus),
+        default=ReviewStatus.PENDING,
+        index=True
+    )
+
+    admin_note: Mapped[str | None] = mapped_column(
+        Text,
+        nullable=True
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    user = relationship(
+        "User",
+        back_populates="reviews"
+    )
+
+    product = relationship(
+        "Product",
+        back_populates="reviews"
+    )
 
 class CartItem(Base):
     __tablename__ = "cart_items"

@@ -56,8 +56,11 @@ api_router.include_router(auth_router)
 # ==========================
 api_router.include_router(dashboard_router)
 api_router.include_router(admin_category_router)
-
 api_router.include_router(admin_product_router)
+api_router.include_router(inventory_router)
+api_router.include_router(admin_order_router)
+api_router.include_router(user_router)
+api_router.include_router(setting_router)
 
 api_router.include_router(store_product_router)
 api_router.include_router(store_category_router)
@@ -67,10 +70,7 @@ api_router.include_router(cart_router)
 api_router.include_router(coupon_routes)
 api_router.include_router(category_icon_routes)
 api_router.include_router(customer_order_router)
-api_router.include_router(inventory_router)
-api_router.include_router(admin_order_router)
-api_router.include_router(user_router)
-api_router.include_router(setting_router)
+
 '''
 api_router.include_router(inventory_router)
 
