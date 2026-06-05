@@ -11,7 +11,21 @@ from app.models.models import (
     OrderItem,
     Product
 )
+from app.models.models import (
+    Coupon,
+    StoreSetting,
+    Order,
+    OrderItem,
+    Product,
+    User,
+    OrderStatus
+)
+from sqlalchemy import select, func, or_
 
+from app.models.models import (
+    Order,
+    User
+)
 
 class OrderRepository:
 
@@ -75,12 +89,14 @@ class OrderRepository:
         result = await db.execute(
             select(Order)
             .options(
+                joinedload(Order.user),
+
                 joinedload(Order.items)
                 .joinedload(OrderItem.product),
 
-                joinedload(Order.payments),
+                joinedload(Order.address),
 
-                joinedload(Order.address)
+                joinedload(Order.payments)
             )
             .where(
                 Order.id == order_id
@@ -102,12 +118,14 @@ class OrderRepository:
         result = await db.execute(
             select(Order)
             .options(
+                joinedload(Order.user),
+
                 joinedload(Order.items)
                 .joinedload(OrderItem.product),
 
-                joinedload(Order.payments),
+                joinedload(Order.address),
 
-                joinedload(Order.address)
+                joinedload(Order.payments)
             )
             .where(
                 Order.user_id == user_id
@@ -134,12 +152,14 @@ class OrderRepository:
         result = await db.execute(
             select(Order)
             .options(
+                joinedload(Order.user),
+
                 joinedload(Order.items)
                 .joinedload(OrderItem.product),
 
-                joinedload(Order.payments),
+                joinedload(Order.address),
 
-                joinedload(Order.address)
+                joinedload(Order.payments)
             )
             .where(
                 Order.id == order_id,
@@ -171,3 +191,143 @@ class OrderRepository:
     ):
 
         await db.commit()
+    
+
+
+    @staticmethod
+    async def get_orders(
+        db,
+        page: int,
+        page_size: int,
+        search=None,
+        status=None,
+        payment_status=None
+    ):
+
+        query = (
+            select(Order)
+            .join(User)
+            .options(
+                joinedload(Order.user),
+                joinedload(Order.address),
+                joinedload(Order.items),
+                joinedload(Order.payments)
+            )
+        )
+
+        if search:
+            query = query.where(
+                or_(
+                    Order.order_number.ilike(f"%{search}%"),
+                    User.full_name.ilike(f"%{search}%"),
+                    User.phone.ilike(f"%{search}%")
+                )
+            )
+
+        if status:
+            query = query.where(
+                Order.status == status
+            )
+
+        if payment_status:
+            query = query.where(
+                Order.payment_status == payment_status
+            )
+
+        total_query = (
+            select(func.count())
+            .select_from(query.subquery())
+        )
+
+        total = await db.scalar(total_query)
+
+        query = (
+            query
+            .order_by(Order.created_at.desc())
+            .offset((page - 1) * page_size)
+            .limit(page_size)
+        )
+
+        result = await db.execute(query)
+
+        orders = (
+            result
+            .unique()
+            .scalars()
+            .all()
+        )
+
+        return orders, total
+
+    @staticmethod
+    async def update_order_status(
+        db,
+        order_id,
+        status
+    ):
+
+        order = await OrderRepository.get_order_by_id(
+            db,
+            order_id
+        )
+
+        if not order:
+            return None
+
+        order.status = status
+
+        await db.commit()
+
+        await db.refresh(order)
+
+        return order
+    
+
+    @staticmethod
+    async def update_payment_status(
+        db,
+        order_id,
+        payment_status
+    ):
+
+        order = await OrderRepository.get_order_by_id(
+            db,
+            order_id
+        )
+
+        if not order:
+            return None
+
+        order.payment_status = payment_status
+
+        await db.commit()
+
+        await db.refresh(order)
+
+        return order
+    
+
+    @staticmethod
+    async def cancel_order(
+        db,
+        order_id,
+        reason
+    ):
+
+        order = await OrderRepository.get_order_by_id(
+            db,
+            order_id
+        )
+
+        if not order:
+            return None
+
+        order.status = OrderStatus.CANCELLED
+
+        order.cancel_reason = reason
+
+        await db.commit()
+
+        await db.refresh(order)
+
+        return order

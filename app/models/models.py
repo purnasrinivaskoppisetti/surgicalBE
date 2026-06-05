@@ -413,3 +413,56 @@ class StoreSetting(Base):
     company_logo_url: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+class OrderStatusHistory(Base):
+    __tablename__ = "order_status_history"
+
+    id = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    order_id = mapped_column(
+        ForeignKey("orders.id")
+    )
+
+    status = mapped_column(
+        SQLEnum(OrderStatus)
+    )
+
+    note = mapped_column(Text)
+
+    created_at = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now()
+    )
+
+class Shipment(Base):
+    __tablename__ = "shipments"
+
+    id = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        default=uuid.uuid4
+    )
+
+    order_id = mapped_column(
+        ForeignKey("orders.id")
+    )
+
+    courier_name = mapped_column(
+        String(100)
+    )
+
+    tracking_number = mapped_column(
+        String(100)
+    )
+
+    estimated_delivery = mapped_column(
+        DateTime(timezone=True)
+    )
+
+    shipped_at = mapped_column(
+        DateTime(timezone=True)
+    )

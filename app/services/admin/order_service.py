@@ -1,205 +1,191 @@
-import uuid
-
-from decimal import Decimal
-
-from app.models.models import (
-    Order,
-    OrderItem,
-    CouponUsage,
-    OrderStatus,
-    PaymentStatus
-)
-
-from app.repositories.cart_repository import (
-    CartRepository
-)
-
 from app.repositories.order_repository import (
     OrderRepository
-)
-
-from app.repositories.coupon_repository import (
-    CouponRepository
-)
-
-from app.repositories.setting_repository import (
-    SettingRepository
 )
 
 
 class OrderService:
 
     @staticmethod
-    async def create_order(
+    async def get_orders(
         db,
-        user_id,
-        payload
+        page: int,
+        page_size: int,
+        search=None,
+        status=None,
+        payment_status=None
     ):
 
-        cart_items = await (
-            CartRepository.get_all_cart_items(
-                db,
-                user_id
-            )
+        orders, total = await OrderRepository.get_orders(
+            db=db,
+            page=page,
+            page_size=page_size,
+            search=search,
+            status=status,
+            payment_status=payment_status
         )
-
-        if not cart_items:
-
-            return {
-                "success": False,
-                "status_code": 400,
-                "message": "Cart is empty"
-            }
-
-        subtotal = Decimal("0")
-
-        for item in cart_items:
-
-            subtotal += (
-                item.product.sale_price *
-                item.quantity
-            )
-
-        settings = await (
-            SettingRepository.get_settings(
-                db
-            )
-        )
-
-        shipping_charge = Decimal("0")
-
-        if settings:
-
-            if (
-                subtotal <
-                settings.free_shipping_threshold
-            ):
-                shipping_charge = (
-                    settings.delivery_charge
-                )
-
-        discount = Decimal("0")
-
-        coupon = None
-
-        if payload.coupon_code:
-
-            coupon = await (
-                CouponRepository.get_by_code(
-                    db,
-                    payload.coupon_code
-                )
-            )
-
-            if coupon:
-
-                if (
-                    coupon.coupon_type.value
-                    == "flat"
-                ):
-                    discount = (
-                        coupon.discount_value
-                    )
-
-                elif (
-                    coupon.coupon_type.value
-                    == "percentage"
-                ):
-                    discount = (
-                        subtotal *
-                        coupon.discount_value
-                    ) / Decimal("100")
-
-        total_amount = (
-            subtotal +
-            shipping_charge -
-            discount
-        )
-
-        order = Order(
-            order_number=
-            f"SW-{uuid.uuid4().hex[:10].upper()}",
-            user_id=user_id,
-            address_id=payload.address_id,
-            coupon_id=
-            coupon.id if coupon else None,
-            coupon_code=
-            coupon.code if coupon else None,
-            status=OrderStatus.PENDING,
-            payment_status=PaymentStatus.PENDING,
-            subtotal=subtotal,
-            gst_amount=0,
-            shipping_charge=shipping_charge,
-            discount=discount,
-            total_amount=total_amount
-        )
-
-        await OrderRepository.create_order(
-            db,
-            order
-        )
-
-        for cart_item in cart_items:
-
-            order_item = OrderItem(
-                order_id=order.id,
-                product_id=cart_item.product.id,
-                product_name=cart_item.product.name,
-                product_sku=cart_item.product.sku,
-                quantity=cart_item.quantity,
-                price=cart_item.product.sale_price,
-                gst_amount=0,
-                total=
-                cart_item.product.sale_price *
-                cart_item.quantity
-            )
-
-            await (
-                OrderRepository
-                .create_order_item(
-                    db,
-                    order_item
-                )
-            )
-
-            cart_item.product.stock_qty -= (
-                cart_item.quantity
-            )
-
-        if coupon:
-
-            coupon_usage = CouponUsage(
-                coupon_id=coupon.id,
-                user_id=user_id,
-                order_id=order.id,
-                discount_amount=discount
-            )
-
-            db.add(coupon_usage)
-
-            coupon.used_count += 1
-
-        for item in cart_items:
-
-            await db.delete(item)
-
-        await db.commit()
 
         return {
-            "success": True,
-            "status_code": 201,
-            "message": "Order placed successfully",
-            "data": {
-                "order_id": str(order.id),
-                "order_number":
-                order.order_number,
-                "subtotal":
-                float(subtotal),
-                "shipping_charge":
-                float(shipping_charge),
-                "discount":
-                float(discount),
-                "total_amount":
-                float(total_amount)
+            "orders": [
+                {
+                    "id": str(order.id),
+                    "order_number": order.order_number,
+                    "customer_name": (
+                        order.user.full_name
+                        if order.user else None
+                    ),
+                    "customer_phone": (
+                        order.user.phone
+                        if order.user else None
+                    ),
+                    "items_count": len(order.items),
+                    "amount": float(order.total_amount),
+                    "payment_status": (
+                        order.payment_status.value
+                        if order.payment_status
+                        else None
+                    ),
+                    "status": (
+                        order.status.value
+                        if order.status
+                        else None
+                    ),
+                    "order_date": order.created_at
+                }
+                for order in orders
+            ],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total
             }
         }
+
+    @staticmethod
+    async def get_order(
+        db,
+        order_id
+    ):
+
+        order = await OrderRepository.get_order_by_id(
+            db,
+            order_id
+        )
+
+        if not order:
+            return None
+
+        return {
+            "id": str(order.id),
+
+            "order_number": order.order_number,
+
+            "customer": {
+                "name": (
+                    order.user.full_name
+                    if order.user else None
+                ),
+                "phone": (
+                    order.user.phone
+                    if order.user else None
+                ),
+                "email": (
+                    order.user.email
+                    if order.user else None
+                )
+            },
+
+            "shipping_address": {
+                "full_name": (
+                    order.address.full_name
+                    if order.address else None
+                ),
+                "phone": (
+                    order.address.phone
+                    if order.address else None
+                ),
+                "address": (
+                    order.address.address_line1
+                    if order.address else None
+                ),
+                "city": (
+                    order.address.city
+                    if order.address else None
+                ),
+                "state": (
+                    order.address.state
+                    if order.address else None
+                ),
+                "pincode": (
+                    order.address.pincode
+                    if order.address else None
+                )
+            },
+
+            "items": [
+                {
+                    "product_id": str(item.product_id),
+                    "product_name": item.product_name,
+                    "quantity": item.quantity,
+                    "price": float(item.price),
+                    "total": float(item.total)
+                }
+                for item in order.items
+            ],
+
+            "pricing": {
+                "subtotal": float(order.subtotal),
+                "gst": float(order.gst_amount),
+                "shipping": float(order.shipping_charge),
+                "discount": float(order.discount),
+                "grand_total": float(order.total_amount)
+            },
+
+            "status": (
+                order.status.value
+                if order.status else None
+            ),
+
+            "payment_status": (
+                order.payment_status.value
+                if order.payment_status else None
+            )
+        }
+
+    @staticmethod
+    async def update_status(
+        db,
+        order_id,
+        status
+    ):
+
+        return await OrderRepository.update_order_status(
+            db,
+            order_id,
+            status
+        )
+
+    @staticmethod
+    async def update_payment_status(
+        db,
+        order_id,
+        payment_status
+    ):
+
+        return await OrderRepository.update_payment_status(
+            db,
+            order_id,
+            payment_status
+        )
+
+    @staticmethod
+    async def cancel_order(
+        db,
+        order_id,
+        reason
+    ):
+
+        return await OrderRepository.cancel_order(
+            db,
+            order_id,
+            reason
+        )
