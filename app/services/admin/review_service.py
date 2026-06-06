@@ -14,13 +14,20 @@ class AdminReviewService:
     @staticmethod
     async def get_reviews(
         db,
-        status=None
+        status=None,
+        page: int = 1,
+        page_size: int = 20
     ):
 
         reviews = await ReviewRepository.get_all_reviews(
             db=db,
             status=status
         )
+
+        start = (page - 1) * page_size
+        end = start + page_size
+
+        paginated_reviews = reviews[start:end]
 
         return {
             "success": True,
@@ -52,8 +59,16 @@ class AdminReviewService:
                     "created_at":
                         review.created_at
                 }
-                for review in reviews
-            ]
+                for review in paginated_reviews
+            ],
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total_items": len(reviews),
+                "total_pages": (
+                    len(reviews) + page_size - 1
+                ) // page_size
+            }
         }
 
     @staticmethod
@@ -84,6 +99,7 @@ class AdminReviewService:
 
         return {
             "success": True,
+            "status_code": 200,
             "message": "Review approved successfully"
         }
 
@@ -115,6 +131,7 @@ class AdminReviewService:
 
         return {
             "success": True,
+            "status_code": 200,
             "message": "Review rejected successfully"
         }
 
@@ -146,6 +163,7 @@ class AdminReviewService:
 
         return {
             "success": True,
+            "status_code": 200,
             "message": "Review flagged successfully"
         }
 

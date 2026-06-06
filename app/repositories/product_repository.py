@@ -259,6 +259,10 @@ class ProductRepository:
 
         result = await db.execute(
             select(Product)
+            .options(
+                joinedload(Product.category),
+                joinedload(Product.images)
+            )
             .where(
                 Product.id == product_id,
                 Product.is_deleted == False,
@@ -266,4 +270,4 @@ class ProductRepository:
             )
         )
 
-        return result.scalar_one_or_none()
+        return result.unique().scalar_one_or_none()
