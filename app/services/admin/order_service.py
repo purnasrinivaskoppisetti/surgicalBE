@@ -31,15 +31,19 @@ class OrderService:
 
         "order_number": order.order_number,
 
-        "product_ids": [
-            str(item.product_id)
-            for item in order.items
-        ],
+        "products": [
+            {
+                "product_id": str(item.product_id),
 
-        "product_images": [
-            item.product.thumbnail_url
+                "product_name": item.product_name,
+
+                "product_image": (
+                    item.product.thumbnail_url
+                    if item.product
+                    else None
+                )
+            }
             for item in order.items
-            if item.product
         ],
 
         "customer_name": (

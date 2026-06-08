@@ -209,8 +209,12 @@ class OrderRepository:
             .join(User)
             .options(
                 joinedload(Order.user),
+
                 joinedload(Order.address),
-                joinedload(Order.items),
+
+                joinedload(Order.items)
+                .joinedload(OrderItem.product),
+
                 joinedload(Order.payments)
             )
         )
