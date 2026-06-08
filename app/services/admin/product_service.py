@@ -4,7 +4,7 @@ from fastapi import (
     HTTPException,
     UploadFile
 )
-
+from app.core.storage import local_storage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from slugify import slugify
@@ -26,9 +26,7 @@ from app.repositories.product_image_repository import (
     ProductImageRepository
 )
 
-from app.storage.bluehost import (
-    bluehost_storage
-)
+
 
 
 class ProductService:
@@ -146,7 +144,7 @@ class ProductService:
 
         for index, image in enumerate(images):
 
-            image_url = await bluehost_storage.upload_product_image(
+            image_url = await local_storage.upload_product_image(
                 image
             )
 
@@ -488,7 +486,7 @@ class ProductService:
 
             for index, image in enumerate(images):
 
-                image_url = await bluehost_storage.upload_product_image(
+                image_url = await local_storage.upload_product_image(
                     image
                 )
 
