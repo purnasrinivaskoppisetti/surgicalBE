@@ -284,20 +284,35 @@ class OrderService:
                 "success": True,
                 "status_code": 200,
                 "data": [
-                    {
-                        "order_id": str(
-                            order.id
-                        ),
-                        "order_number":
-                        order.order_number,
-                        "status":
-                        order.status.value,
-                        "payment_status":
-                        order.payment_status.value,
-                        "total_amount":
-                        float(
-                            order.total_amount
-                        )
+    {
+        "order_id": str(order.id),
+
+        "order_number": order.order_number,
+
+        "status": order.status.value,
+
+        "payment_status": order.payment_status.value,
+
+        "total_amount": float(
+            order.total_amount
+        ),
+
+        "products": [
+                            {
+                                "product_id": str(
+                                    item.product_id
+                                ),
+
+                                "product_name":
+                                    item.product_name,
+
+                                "product_image":
+                                    item.product.thumbnail_url
+                                    if item.product
+                                    else None
+                            }
+                            for item in order.items
+                        ]
                     }
                     for order in orders
                 ]
@@ -360,24 +375,33 @@ class OrderService:
                     ),
 
                     "items": [
-                        {
-                            "product_name":
-                            item.product_name,
+                                {
+                                    "product_id": str(
+                                        item.product_id
+                                    ),
 
-                            "product_sku":
-                            item.product_sku,
+                                    "product_name":
+                                        item.product_name,
 
-                            "quantity":
-                            item.quantity,
+                                    "product_sku":
+                                        item.product_sku,
 
-                            "price":
-                            float(item.price),
+                                    "product_image":
+                                        item.product.thumbnail_url
+                                        if item.product
+                                        else None,
 
-                            "total":
-                            float(item.total)
-                        }
-                        for item in order.items
-                    ]
+                                    "quantity":
+                                        item.quantity,
+
+                                    "price":
+                                        float(item.price),
+
+                                    "total":
+                                        float(item.total)
+                                }
+                                for item in order.items
+                            ]
                 }
             }
 

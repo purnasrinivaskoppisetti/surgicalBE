@@ -25,39 +25,53 @@ class OrderService:
         )
 
         return {
-            "orders": [
-                {
-                    "id": str(order.id),
-                    "order_number": order.order_number,
-                    "customer_name": (
-                        order.user.full_name
-                        if order.user else None
-                    ),
-                    "customer_phone": (
-                        order.user.phone
-                        if order.user else None
-                    ),
-                    "items_count": len(order.items),
-                    "amount": float(order.total_amount),
-                    "payment_status": (
-                        order.payment_status.value
-                        if order.payment_status
-                        else None
-                    ),
-                    "status": (
-                        order.status.value
-                        if order.status
-                        else None
-                    ),
-                    "order_date": order.created_at
-                }
-                for order in orders
-            ],
-            "pagination": {
-                "page": page,
-                "page_size": page_size,
-                "total": total
-            }
+           "orders": [
+    {
+        "id": str(order.id),
+
+        "order_number": order.order_number,
+
+        "product_ids": [
+            str(item.product_id)
+            for item in order.items
+        ],
+
+        "product_images": [
+            item.product.thumbnail_url
+            for item in order.items
+            if item.product
+        ],
+
+        "customer_name": (
+            order.user.full_name
+            if order.user else None
+        ),
+
+        "customer_phone": (
+            order.user.phone
+            if order.user else None
+        ),
+
+        "items_count": len(order.items),
+
+        "amount": float(order.total_amount),
+
+        "payment_status": (
+            order.payment_status.value
+            if order.payment_status
+            else None
+        ),
+
+        "status": (
+            order.status.value
+            if order.status
+            else None
+        ),
+
+        "order_date": order.created_at
+    }
+    for order in orders
+]
         }
 
     @staticmethod
@@ -75,19 +89,42 @@ class OrderService:
             return None
 
         return {
+
             "id": str(order.id),
 
             "order_number": order.order_number,
 
+            "order_date": order.created_at,
+
+            "status": (
+                order.status.value
+                if order.status
+                else None
+            ),
+
+            "payment_status": (
+                order.payment_status.value
+                if order.payment_status
+                else None
+            ),
+
             "customer": {
+
+                "user_id": (
+                    str(order.user.id)
+                    if order.user else None
+                ),
+
                 "name": (
                     order.user.full_name
                     if order.user else None
                 ),
+
                 "phone": (
                     order.user.phone
                     if order.user else None
                 ),
+
                 "email": (
                     order.user.email
                     if order.user else None
@@ -95,62 +132,127 @@ class OrderService:
             },
 
             "shipping_address": {
+
+                "address_id": (
+                    str(order.address.id)
+                    if order.address else None
+                ),
+
                 "full_name": (
                     order.address.full_name
                     if order.address else None
                 ),
+
                 "phone": (
                     order.address.phone
                     if order.address else None
                 ),
-                "address": (
+
+                "address_line1": (
                     order.address.address_line1
                     if order.address else None
                 ),
+
+                "address_line2": (
+                    order.address.address_line2
+                    if order.address else None
+                ),
+
                 "city": (
                     order.address.city
                     if order.address else None
                 ),
+
                 "state": (
                     order.address.state
                     if order.address else None
                 ),
+
                 "pincode": (
                     order.address.pincode
+                    if order.address else None
+                ),
+
+                "country": (
+                    order.address.country
                     if order.address else None
                 )
             },
 
             "items": [
+
                 {
+                    "order_item_id": str(item.id),
+
                     "product_id": str(item.product_id),
+
                     "product_name": item.product_name,
+
+                    "product_sku": item.product_sku,
+
+                    "product_image": (
+                        item.product.thumbnail_url
+                        if item.product
+                        else None
+                    ),
+
                     "quantity": item.quantity,
+
                     "price": float(item.price),
+
+                    "gst_amount": float(item.gst_amount),
+
                     "total": float(item.total)
                 }
+
                 for item in order.items
             ],
 
             "pricing": {
+
                 "subtotal": float(order.subtotal),
+
                 "gst": float(order.gst_amount),
+
                 "shipping": float(order.shipping_charge),
+
                 "discount": float(order.discount),
+
                 "grand_total": float(order.total_amount)
             },
 
-            "status": (
-                order.status.value
-                if order.status else None
-            ),
+            "payment": [
 
-            "payment_status": (
-                order.payment_status.value
-                if order.payment_status else None
-            )
+                {
+                    "payment_id": str(payment.id),
+
+                    "amount": float(payment.amount),
+
+                    "method": (
+                        payment.payment_method.value
+                        if payment.payment_method
+                        else None
+                    ),
+
+                    "transaction_id":
+                        payment.gateway_transaction_id,
+
+                    "status": (
+                        payment.status.value
+                        if payment.status
+                        else None
+                    ),
+
+                    "paid_at": payment.paid_at
+                }
+
+                for payment in order.payments
+            ],
+
+            "cancel_reason": order.cancel_reason,
+
+            "delivered_at": order.delivered_at
         }
-
     @staticmethod
     async def update_status(
         db,
