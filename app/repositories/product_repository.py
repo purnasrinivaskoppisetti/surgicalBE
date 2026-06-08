@@ -250,6 +250,7 @@ class ProductRepository:
             products,
             total_records
         )
+    
 
     @staticmethod
     async def get_by_id(
