@@ -48,15 +48,35 @@ class CartService:
                 "message": "Product is out of stock"
             }
 
+        if quantity <= 0:
+            return {
+                "success": False,
+                "status_code": 400,
+                "message": "Quantity must be greater than zero"
+            }
+
+        if quantity > product.stock_qty:
+            return {
+                "success": False,
+                "status_code": 400,
+                "message": f"Only {product.stock_qty} item(s) available in stock",
+                "data": {
+                    "available_stock": product.stock_qty,
+                    "requested_quantity": quantity
+                }
+            }
+
         existing = await CartRepository.get_by_user_and_product(
             db,
             user_id,
             product_id
         )
 
+        # Product already exists in cart
         if existing:
 
-            existing.quantity += quantity
+            # REPLACE quantity instead of ADDING
+            existing.quantity = quantity
 
             await CartRepository.update(
                 db,
@@ -66,9 +86,14 @@ class CartService:
             return {
                 "success": True,
                 "status_code": 200,
-                "message": "Cart updated successfully"
+                "message": "Cart quantity updated successfully",
+                "data": {
+                    "product_id": str(product.id),
+                    "quantity": existing.quantity
+                }
             }
 
+        # New cart item
         cart_item = CartItem(
             user_id=user_id,
             product_id=product_id,
@@ -83,8 +108,13 @@ class CartService:
         return {
             "success": True,
             "status_code": 201,
-            "message": "Product added to cart"
+            "message": "Product added to cart",
+            "data": {
+                "product_id": str(product.id),
+                "quantity": quantity
+            }
         }
+
 
     @staticmethod
     async def get_cart(

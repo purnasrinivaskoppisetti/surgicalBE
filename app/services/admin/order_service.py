@@ -24,58 +24,75 @@ class OrderService:
             payment_status=payment_status
         )
 
+        summary = await OrderRepository.get_order_summary(db)
+
         return {
-           "orders": [
-    {
-        "id": str(order.id),
+            "orders": [
+                {
+                    "id": str(order.id),
 
-        "order_number": order.order_number,
+                    "order_number": order.order_number,
 
-        "products": [
-            {
-                "product_id": str(item.product_id),
+                    "products": [
+                        {
+                            "product_id": str(item.product_id),
 
-                "product_name": item.product_name,
+                            "product_name": item.product_name,
 
-                "product_image": (
-                    item.product.thumbnail_url
-                    if item.product
-                    else None
-                )
+                            "product_image": (
+                                item.product.thumbnail_url
+                                if item.product
+                                else None
+                            )
+                        }
+                        for item in order.items
+                    ],
+
+                    "customer_name": (
+                        order.user.full_name
+                        if order.user else None
+                    ),
+
+                    "customer_phone": (
+                        order.user.phone
+                        if order.user else None
+                    ),
+
+                    "items_count": len(order.items),
+
+                    "amount": float(order.total_amount),
+
+                    "payment_status": (
+                        order.payment_status.value
+                        if order.payment_status
+                        else None
+                    ),
+
+                    "status": (
+                        order.status.value
+                        if order.status
+                        else None
+                    ),
+
+                    "order_date": order.created_at
+                }
+                for order in orders
+            ],
+
+            "summary": {
+                "total_orders": summary["total_orders"],
+                "revenue": float(summary["revenue"]),
+                "pending": summary["pending"] or 0,
+                "in_transit": summary["in_transit"] or 0,
+                "delivered": summary["delivered"] or 0,
+                "cancelled": summary["cancelled"] or 0
+            },
+
+            "pagination": {
+                "page": page,
+                "page_size": page_size,
+                "total": total
             }
-            for item in order.items
-        ],
-
-        "customer_name": (
-            order.user.full_name
-            if order.user else None
-        ),
-
-        "customer_phone": (
-            order.user.phone
-            if order.user else None
-        ),
-
-        "items_count": len(order.items),
-
-        "amount": float(order.total_amount),
-
-        "payment_status": (
-            order.payment_status.value
-            if order.payment_status
-            else None
-        ),
-
-        "status": (
-            order.status.value
-            if order.status
-            else None
-        ),
-
-        "order_date": order.created_at
-    }
-    for order in orders
-]
         }
 
     @staticmethod

@@ -457,3 +457,193 @@ class OrderService:
                 "message":
                 "Order cancelled successfully"
             }   
+        
+
+
+
+        @staticmethod
+        async def create_payment_order(
+            db,
+            user_id,
+            payload
+        ):
+            cart_items = await CartRepository.get_all_cart_items(
+                db,
+                user_id
+            )
+
+            if not cart_items:
+                return {
+                    "success": False,
+                    "message": "Cart is empty"
+                }
+
+            subtotal = Decimal("0")
+
+            for item in cart_items:
+                subtotal += (
+                    item.product.sale_price *
+                    item.quantity
+                )
+
+            shipping_charge = Decimal("0")
+
+            settings = await SettingRepository.get_settings(
+                db
+            )
+
+            if (
+                settings and
+                subtotal < settings.free_shipping_threshold
+            ):
+                shipping_charge = settings.delivery_charge
+
+            discount = Decimal("0")
+            coupon = None
+
+            if payload.coupon_code:
+
+                coupon = await CouponRepository.get_by_code(
+                    db,
+                    payload.coupon_code
+                )
+
+                if coupon:
+
+                    if coupon.coupon_type.value == "flat":
+
+                        discount = coupon.discount_value
+
+                    elif coupon.coupon_type.value == "percentage":
+
+                        discount = (
+                            subtotal *
+                            coupon.discount_value
+                        ) / Decimal("100")
+
+            total_amount = (
+                subtotal +
+                shipping_charge -
+                discount
+            )
+
+            return {
+                "success": True,
+                "amount": float(total_amount),
+                "coupon_code": payload.coupon_code,
+                "address_id": str(payload.address_id)
+            }
+        
+
+
+        @staticmethod
+        async def payment_success(
+            db,
+            user_id,
+            payload
+        ):
+
+            cart_items = await CartRepository.get_all_cart_items(
+                db,
+                user_id
+            )
+
+            if not cart_items:
+                return {
+                    "success": False,
+                    "message": "Cart is empty"
+                }
+
+            subtotal = Decimal("0")
+
+            for item in cart_items:
+
+                subtotal += (
+                    item.product.sale_price *
+                    item.quantity
+                )
+
+            settings = await SettingRepository.get_settings(
+                db
+            )
+
+            shipping_charge = Decimal("0")
+
+            if (
+                settings and
+                subtotal < settings.free_shipping_threshold
+            ):
+                shipping_charge = settings.delivery_charge
+
+            discount = Decimal("0")
+            coupon = None
+
+            if payload.coupon_code:
+
+                coupon = await CouponRepository.get_by_code(
+                    db,
+                    payload.coupon_code
+                )
+
+                if coupon:
+
+                    if coupon.coupon_type.value == "flat":
+
+                        discount = coupon.discount_value
+
+                    elif coupon.coupon_type.value == "percentage":
+
+                        discount = (
+                            subtotal *
+                            coupon.discount_value
+                        ) / Decimal("100")
+
+            total_amount = (
+                subtotal +
+                shipping_charge -
+                discount
+            )
+
+            order = Order(
+                order_number=f"SW-{uuid.uuid4().hex[:10].upper()}",
+                user_id=user_id,
+                address_id=payload.address_id,
+                coupon_id=(
+                    coupon.id
+                    if coupon
+                    else None
+                ),
+                coupon_code=(
+                    coupon.code
+                    if coupon
+                    else None
+                ),
+                subtotal=subtotal,
+                gst_amount=Decimal("0"),
+                shipping_charge=shipping_charge,
+                discount=discount,
+                total_amount=total_amount,
+                status=OrderStatus.CONFIRMED,
+                payment_status=PaymentStatus.PAID
+            )
+
+            await OrderRepository.create_order(
+                db,
+                order
+            )
+
+
+        @staticmethod
+        async def clear_cart(
+            db,
+            user_id
+        ):
+            items = await CartRepository.get_all_cart_items(
+                db,
+                user_id
+            )
+
+            for item in items:
+                await db.delete(item)
+
+            await db.flush()

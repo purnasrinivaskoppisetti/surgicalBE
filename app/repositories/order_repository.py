@@ -1,9 +1,9 @@
 from sqlalchemy import select
-
+from sqlalchemy import select, func, case
 from sqlalchemy.orm import (
     joinedload
 )
-
+from sqlalchemy import func
 from app.models.models import (
     Coupon,
     StoreSetting,
@@ -335,3 +335,61 @@ class OrderRepository:
         await db.refresh(order)
 
         return order
+    
+
+    
+   
+
+    @staticmethod
+    async def get_order_summary(db):
+
+        result = await db.execute(
+            select(
+                func.count(Order.id).label("total_orders"),
+
+                func.coalesce(
+                    func.sum(Order.total_amount),
+                    0
+                ).label("revenue"),
+
+                func.sum(
+                    case(
+                        (Order.status == OrderStatus.PENDING, 1),
+                        else_=0
+                    )
+                ).label("pending"),
+
+                func.sum(
+                    case(
+                        (
+                            Order.status.in_([
+                                OrderStatus.SHIPPED,
+                                OrderStatus.OUT_FOR_DELIVERY
+                            ]),
+                            1
+                        ),
+                        else_=0
+                    )
+                ).label("in_transit"),
+
+                func.sum(
+                    case(
+                        (Order.status == OrderStatus.DELIVERED, 1),
+                        else_=0
+                    )
+                ).label("delivered"),
+
+                func.sum(
+                    case(
+                        (Order.status == OrderStatus.CANCELLED, 1),
+                        else_=0
+                    )
+                ).label("cancelled")
+            )
+        )
+
+        return result.mappings().one()
+    
+
+    
+    
