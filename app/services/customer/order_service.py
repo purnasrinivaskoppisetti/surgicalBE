@@ -632,6 +632,8 @@ class OrderService:
                 order
             )
 
+            
+
             await db.commit()
 
             return {
