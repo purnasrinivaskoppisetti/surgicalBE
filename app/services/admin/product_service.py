@@ -6,7 +6,7 @@ from fastapi import (
 )
 from app.core.storage import local_storage
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from sqlalchemy.exc import IntegrityError
 from slugify import slugify
 
 from app.models.models import (
@@ -63,126 +63,169 @@ class ProductService:
             ) * 100
         )
 
+
     @staticmethod
     async def create_product(
         db: AsyncSession,
         payload,
         images: list[UploadFile]
     ):
+        try:
 
-        category = await CategoryRepository.get_by_id(
-            db,
-            payload.category_id
-        )
-
-        if not category:
-            raise HTTPException(
-                status_code=404,
-                detail="Category not found"
+            category = await CategoryRepository.get_by_id(
+                db,
+                payload.category_id
             )
 
-        existing_sku = await ProductRepository.get_by_sku(
-            db,
-            payload.sku
-        )
-
-        if existing_sku:
-            raise HTTPException(
-                status_code=400,
-                detail="SKU already exists"
-            )
-
-        if len(images) == 0:
-            raise HTTPException(
-                status_code=400,
-                detail="At least one image required"
-            )
-
-        if len(images) > 6:
-            raise HTTPException(
-                status_code=400,
-                detail="Maximum 6 images allowed"
-            )
-
-        slug = slugify(
-            payload.name
-        )
-
-        product = Product(
-            category_id=payload.category_id,
-
-            name=payload.name,
-            slug=slug,
-            sku=payload.sku,
-
-            brand=payload.brand,
-
-            description=payload.description,
-            short_description=payload.short_description,
-
-            mrp=payload.mrp,
-            sale_price=payload.sale_price,
-
-            stock_qty=payload.stock_qty,
-
-            manufacturer=payload.manufacturer,
-            hsn_code=payload.hsn_code,
-
-            is_featured=payload.is_featured,
-            is_bestseller=payload.is_bestseller,
-            is_new_arrival=payload.is_new_arrival
-        )
-
-        product = await ProductRepository.create(
-            db,
-            product
-        )
-
-        image_records = []
-
-        thumbnail_url = None
-
-        for index, image in enumerate(images):
-
-            image_url = await local_storage.upload_product_image(
-                image
-            )
-
-            if index == 0:
-                thumbnail_url = image_url
-
-            image_records.append(
-                ProductImage(
-                    product_id=product.id,
-                    image_url=image_url,
-                    is_primary=(index == 0),
-                    sort_order=index
+            if not category:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Category not found"
                 )
+
+            existing_sku = await ProductRepository.get_by_sku(
+                db,
+                payload.sku
             )
 
-        await ProductImageRepository.bulk_create(
-            db,
-            image_records
-        )
+            if existing_sku:
+                raise HTTPException(
+                    status_code=400,
+                    detail="SKU already exists"
+                )
 
-        product.thumbnail_url = thumbnail_url
+            if payload.sale_price > payload.mrp:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Sale price cannot be greater than MRP"
+                )
 
-        await ProductRepository.update(
-            db,
-            product
-        )
+            if len(images) == 0:
+                raise HTTPException(
+                    status_code=400,
+                    detail="At least one image required"
+                )
 
-        return {
-            "success": True,
-            "status_code": 201,
-            "message": "Product created successfully",
-            "data": {
-                "id": str(product.id),
-                "name": product.name,
-                "sku": product.sku
+            if len(images) > 6:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Maximum 6 images allowed"
+                )
+
+            MAX_IMAGE_SIZE = 3 * 1024 * 1024
+
+            for image in images:
+
+                if image.content_type not in [
+                    "image/jpeg",
+                    "image/jpg",
+                    "image/png",
+                    "image/webp",
+                    "image/jfif"
+                ]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{image.filename} is not a valid image"
+                    )
+
+                contents = await image.read()
+
+                if len(contents) > MAX_IMAGE_SIZE:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"{image.filename} exceeds 3 MB limit"
+                    )
+
+                await image.seek(0)
+
+            slug = slugify(payload.name)
+
+            product = Product(
+                category_id=payload.category_id,
+                name=payload.name,
+                slug=slug,
+                sku=payload.sku,
+                brand=payload.brand,
+                description=payload.description,
+                short_description=payload.short_description,
+                mrp=payload.mrp,
+                sale_price=payload.sale_price,
+                stock_qty=payload.stock_qty,
+                manufacturer=payload.manufacturer,
+                hsn_code=payload.hsn_code,
+                is_featured=payload.is_featured,
+                is_bestseller=payload.is_bestseller,
+                is_new_arrival=payload.is_new_arrival
+            )
+
+            product = await ProductRepository.create(
+                db,
+                product
+            )
+
+            image_records = []
+            thumbnail_url = None
+
+            for index, image in enumerate(images):
+
+                image_url = await local_storage.upload_product_image(
+                    image
+                )
+
+                if index == 0:
+                    thumbnail_url = image_url
+
+                image_records.append(
+                    ProductImage(
+                        product_id=product.id,
+                        image_url=image_url,
+                        is_primary=(index == 0),
+                        sort_order=index
+                    )
+                )
+
+            await ProductImageRepository.bulk_create(
+                db,
+                image_records
+            )
+
+            product.thumbnail_url = thumbnail_url
+
+            await ProductRepository.update(
+                db,
+                product
+            )
+
+            return {
+                "success": True,
+                "status_code": 201,
+                "message": "Product created successfully",
+                "data": {
+                    "id": str(product.id),
+                    "name": product.name,
+                    "sku": product.sku
+                }
             }
-        }
 
+        except HTTPException:
+            raise
+
+        except IntegrityError:
+            await db.rollback()
+
+            raise HTTPException(
+                status_code=400,
+                detail="Duplicate product data found"
+            )
+
+        except Exception as e:
+
+            await db.rollback()
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to create product: {str(e)}"
+            )
     @staticmethod
     async def get_products(
         db: AsyncSession,
@@ -441,84 +484,147 @@ class ProductService:
         payload,
         images: list[UploadFile] | None = None
     ):
+        try:
 
-        product = await ProductRepository.get_by_id(
-            db,
-            product_id
-        )
-
-        if not product:
-            raise HTTPException(
-                status_code=404,
-                detail="Product not found"
-            )
-
-        update_data = payload.model_dump(
-            exclude_unset=True
-        )
-
-        if "name" in update_data:
-
-            product.name = update_data["name"]
-
-            product.slug = slugify(
-                update_data["name"]
-            )
-
-        for key, value in update_data.items():
-
-            setattr(
-                product,
-                key,
-                value
-            )
-
-        if images:
-
-            await ProductImageRepository.delete_product_images(
+            product = await ProductRepository.get_by_id(
                 db,
-                product.id
+                product_id
             )
 
-            image_records = []
-
-            thumbnail_url = None
-
-            for index, image in enumerate(images):
-
-                image_url = await local_storage.upload_product_image(
-                    image
+            if not product:
+                raise HTTPException(
+                    status_code=404,
+                    detail="Product not found"
                 )
 
-                if index == 0:
-                    thumbnail_url = image_url
+            update_data = payload.model_dump(
+                exclude_unset=True
+            )
 
-                image_records.append(
-                    ProductImage(
-                        product_id=product.id,
-                        image_url=image_url,
-                        is_primary=(index == 0),
-                        sort_order=index
+            if (
+                "mrp" in update_data
+                and "sale_price" in update_data
+                and update_data["sale_price"] > update_data["mrp"]
+            ):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Sale price cannot be greater than MRP"
+                )
+
+            if "name" in update_data:
+
+                product.name = update_data["name"]
+
+                product.slug = slugify(
+                    update_data["name"]
+                )
+
+            for key, value in update_data.items():
+
+                setattr(
+                    product,
+                    key,
+                    value
+                )
+
+            if images:
+
+                if len(images) > 6:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Maximum 6 images allowed"
                     )
+
+                MAX_IMAGE_SIZE = 3 * 1024 * 1024
+
+                for image in images:
+
+                    if image.content_type not in [
+                        "image/jpeg",
+                        "image/jpg",
+                        "image/png",
+                        "image/webp",
+                        "image/jfif"    
+                    ]:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{image.filename} is not a valid image"
+                        )
+
+                    contents = await image.read()
+
+                    if len(contents) > MAX_IMAGE_SIZE:
+                        raise HTTPException(
+                            status_code=400,
+                            detail=f"{image.filename} exceeds 3 MB limit"
+                        )
+
+                    await image.seek(0)
+
+                await ProductImageRepository.delete_product_images(
+                    db,
+                    product.id
                 )
 
-            await ProductImageRepository.bulk_create(
+                image_records = []
+
+                thumbnail_url = None
+
+                for index, image in enumerate(images):
+
+                    image_url = await local_storage.upload_product_image(
+                        image
+                    )
+
+                    if index == 0:
+                        thumbnail_url = image_url
+
+                    image_records.append(
+                        ProductImage(
+                            product_id=product.id,
+                            image_url=image_url,
+                            is_primary=(index == 0),
+                            sort_order=index
+                        )
+                    )
+
+                await ProductImageRepository.bulk_create(
+                    db,
+                    image_records
+                )
+
+                product.thumbnail_url = thumbnail_url
+
+            await ProductRepository.update(
                 db,
-                image_records
+                product
             )
 
-            product.thumbnail_url = thumbnail_url
+            return {
+                "success": True,
+                "status_code": 200,
+                "message": "Product updated successfully"
+            }
 
-        await ProductRepository.update(
-            db,
-            product
-        )
+        except HTTPException:
+            raise
 
-        return {
-            "success": True,
-            "status_code": 200,
-            "message": "Product updated successfully"
-        }
+        except IntegrityError:
+            await db.rollback()
+
+            raise HTTPException(
+                status_code=400,
+                detail="Duplicate product data found"
+            )
+
+        except Exception as e:
+
+            await db.rollback()
+
+            raise HTTPException(
+                status_code=500,
+                detail=f"Failed to update product: {str(e)}"
+            )
 
     @staticmethod
     async def delete_product(
