@@ -15,11 +15,9 @@ class CreateOrderRequest(BaseModel):
 
 
 class PaymentSuccessRequest(BaseModel):
-
-    order_id: UUID
-
+    address_id: UUID
     transaction_id: str
-
+    coupon_code: str | None = None
 
 class CancelOrderRequest(BaseModel):
 

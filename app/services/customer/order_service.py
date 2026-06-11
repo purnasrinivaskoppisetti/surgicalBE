@@ -632,6 +632,13 @@ class OrderService:
                 order
             )
 
+            await db.commit()
+
+            return {
+                "success": True,
+                "message": "Payment successful"
+            }
+
 
         @staticmethod
         async def clear_cart(
