@@ -287,7 +287,7 @@ class ProductService:
                                         },
 
                                         "rating": review.rating,
-                                        "comment": review.comment,
+                                        "review_text": review.review_text,
 
                                         "image_url": review.image_url,
 
