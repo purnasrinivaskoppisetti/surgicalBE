@@ -277,6 +277,28 @@ class ProductService:
                             "two_star": rating_breakdown["2_star"],
                             "one_star": rating_breakdown["1_star"]
                         },
+                        "reviews": [
+                                    {
+                                        "id": str(review.id),
+
+                                        "user": {
+                                            "id": str(review.user.id),
+                                            "name": review.user.full_name
+                                        },
+
+                                        "rating": review.rating,
+                                        "comment": review.comment,
+
+                                        "image_url": review.image_url,
+
+                                        "is_verified_purchase":
+                                            review.is_verified_purchase,
+
+                                        "created_at":
+                                            review.created_at
+                                    }
+                                    for review in approved_reviews
+                                ],
 
                         "image_url": review.image_url,
 
