@@ -152,3 +152,18 @@ class CouponRepository:
             return None
 
         return coupon
+    
+    @staticmethod
+    async def get_coupon_by_code(
+        db,
+        code: str
+    ):
+        result = await db.execute(
+            select(Coupon)
+            .where(
+                Coupon.code == code,
+                Coupon.is_active == True
+            )
+        )
+
+        return result.scalar_one_or_none()
