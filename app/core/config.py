@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     # Storage
     UPLOAD_DIR: str
     SITE_URL: str
+    RAZORPAY_KEY_ID: str
+
+    RAZORPAY_KEY_SECRET: str
+
 
     class Config:
         env_file = ".env"

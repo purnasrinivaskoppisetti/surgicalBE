@@ -44,6 +44,7 @@ typing-inspection==0.4.2
 # Environment Variables
 # =========================
 python-dotenv==1.1.1
+razorpay==1.4.2
 
 # =========================
 # Multipart/File Uploads

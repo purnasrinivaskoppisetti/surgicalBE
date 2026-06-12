@@ -21,7 +21,7 @@ from app.api.routes.admin.user_routes import router as user_router
 from app.api.routes.admin.setting_routes import router as setting_router
 from app.api.routes.customer.review_routes import router as review_router
 from app.api.routes.admin.review_routes import router as admin_review_router
-
+from app.api.routes.shop.billing_routes import (router as billing_router)
 '''from app.api.routes.admin.dashboard_routes import router as dashboard_router
 from app.api.routes.admin.inventory_routes import router as inventory_router
 from app.api.routes.admin.order_routes import router as admin_order_router
@@ -74,7 +74,7 @@ api_router.include_router(coupon_routes)
 api_router.include_router(category_icon_routes)
 api_router.include_router(customer_order_router)
 api_router.include_router(review_router)
-
+api_router.include_router(billing_router)
 '''
 api_router.include_router(inventory_router)
 
