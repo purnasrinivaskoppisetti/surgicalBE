@@ -80,6 +80,7 @@ async def global_exception_handler(
     return JSONResponse(
         status_code=500,
         content={
+            
             "success": False,
             "status_code": 500,
             "message": "Internal Server Error",
@@ -100,10 +101,8 @@ async def root():
 
 
 
-
-
 app.include_router(
-    
+
     api_router,
     prefix="/api/v1"
 )
