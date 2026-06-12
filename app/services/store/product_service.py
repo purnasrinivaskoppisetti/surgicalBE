@@ -49,60 +49,76 @@ class ProductService:
             else:
                 stock_status = "In Stock"
 
+            approved_reviews = [
+                review
+                for review in product.reviews
+                if review.status.value == "approved"
+            ]
+
+            review_count = len(approved_reviews)
+
+            average_rating = round(
+                sum(review.rating for review in approved_reviews) / review_count,
+                1
+            ) if review_count > 0 else 0
+
             response_data.append(
-                                    {
-                                        "id": str(product.id),
+                        {
+                            "id": str(product.id),
 
-                                        "category_id": str(product.category_id)
-                                        if product.category_id else None,
+                            "category_id": (
+                                str(product.category_id)
+                                if product.category_id else None
+                            ),
 
-                                        "category_name": (
-                                            product.category.name
-                                            if product.category
-                                            else None
-                                        ),
+                            "category_name": (
+                                product.category.name
+                                if product.category
+                                else None
+                            ),
 
-                                        "category_slug": (
-                                            product.category.slug
-                                            if product.category
-                                            else None
-                                        ),
+                            "category_slug": (
+                                product.category.slug
+                                if product.category
+                                else None
+                            ),
 
-                                        "name": product.name,
-                                        "slug": product.slug,
-                                        "sku": product.sku,
-                                        "brand": product.brand,
-                                        "short_description": product.short_description,
+                            "name": product.name,
+                            "slug": product.slug,
+                            "sku": product.sku,
+                            "brand": product.brand,
+                            "short_description": product.short_description,
 
-                                        "mrp": str(product.mrp),
-                                        "sale_price": str(product.sale_price),
-                                        "discount_percentage": discount_percentage,
+                            "mrp": str(product.mrp),
+                            "sale_price": str(product.sale_price),
+                            "discount_percentage": discount_percentage,
 
-                                        "stock_qty": product.stock_qty,
-                                        "stock_status": stock_status,
+                            "stock_qty": product.stock_qty,
+                            "stock_status": stock_status,
 
-                                        "thumbnail_url": product.thumbnail_url,
+                            "thumbnail_url": product.thumbnail_url,
 
-                                        "rating": str(product.rating),
-                                        "review_count": product.review_count,
+                            # Dynamic Rating
+                            "rating": average_rating,
+                            "review_count": review_count,
 
-                                        "is_featured": product.is_featured,
-                                        "is_bestseller": product.is_bestseller,
-                                        "is_new_arrival": product.is_new_arrival,
+                            "is_featured": product.is_featured,
+                            "is_bestseller": product.is_bestseller,
+                            "is_new_arrival": product.is_new_arrival,
 
-                                        "created_at": product.created_at,
+                            "created_at": product.created_at,
 
-                                        "images": [
-                                            {
-                                                "id": str(img.id),
-                                                "image_url": img.image_url,
-                                                "is_primary": img.is_primary,
-                                                "sort_order": img.sort_order
-                                            }
-                                            for img in product.images
-                                        ]
-                                    }
-                                )
+                            "images": [
+                                {
+                                    "id": str(img.id),
+                                    "image_url": img.image_url,
+                                    "is_primary": img.is_primary,
+                                    "sort_order": img.sort_order
+                                }
+                                for img in product.images
+                            ]
+                        }
+                    )
 
         return {
             "success": True,
@@ -155,6 +171,24 @@ class ProductService:
             for review in product.reviews
             if review.status.value == "approved"
         ]
+
+        review_count = len(approved_reviews)
+
+        average_rating = round(
+            sum(review.rating for review in approved_reviews) / review_count,
+            1
+        ) if review_count > 0 else 0
+
+        rating_breakdown = {
+            "5_star": 0,
+            "4_star": 0,
+            "3_star": 0,
+            "2_star": 0,
+            "1_star": 0
+        }
+
+        for review in approved_reviews:
+            rating_breakdown[f"{review.rating}_star"] += 1
 
         return {
             "success": True,
@@ -231,9 +265,18 @@ class ProductService:
                             "name": review.user.full_name
                         },
 
-                        "rating": review.rating,
+                        "rating": average_rating,
+                        "review_count": review_count,
 
-                        "review_text": review.review_text,
+                        "rating_summary": {
+                            "average_rating": average_rating,
+                            "total_reviews": review_count,
+                            "five_star": rating_breakdown["5_star"],
+                            "four_star": rating_breakdown["4_star"],
+                            "three_star": rating_breakdown["3_star"],
+                            "two_star": rating_breakdown["2_star"],
+                            "one_star": rating_breakdown["1_star"]
+                        },
 
                         "image_url": review.image_url,
 
