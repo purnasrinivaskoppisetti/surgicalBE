@@ -40,7 +40,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:3000",
         "http://localhost:5173",
-        "http://127.0.0.1:3000",
+        "http://127.0.0.1:3000",                            
         "http://127.0.0.1:5173",
         "*",
         
@@ -99,7 +99,11 @@ async def root():
     }
 
 
+
+
+
 app.include_router(
+    
     api_router,
     prefix="/api/v1"
 )
