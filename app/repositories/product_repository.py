@@ -187,7 +187,8 @@ class ProductRepository:
             )
             .options(
                 joinedload(Product.images),
-                joinedload(Product.category)
+                joinedload(Product.category),
+                joinedload(Product.reviews)
             )
             .where(*conditions)
         )
@@ -262,7 +263,8 @@ class ProductRepository:
             select(Product)
             .options(
                 joinedload(Product.category),
-                joinedload(Product.images)
+                joinedload(Product.images),
+                joinedload(Product.reviews)
             )
             .where(
                 Product.id == product_id,
