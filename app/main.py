@@ -5,7 +5,7 @@ from fastapi import (
     HTTPException,
     Request
 )
-
+from fastapi.staticfiles import StaticFiles
 from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -34,7 +34,11 @@ app = FastAPI(
 # ==========================
 # CORS Middleware
 # ==========================
-
+app.mount(
+    "/uploads",
+    StaticFiles(directory="/var/www/surgical/uploads"),
+    name="uploads"
+)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
