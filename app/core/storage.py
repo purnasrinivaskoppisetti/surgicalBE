@@ -48,7 +48,7 @@ class LocalStorage:
         print("=" * 50)
 
         return (
-            f"http://187.127.163.100/uploads/products/{filename}"
+            f"https://api.surgicalworld.org/uploads/products/{filename}"
         )
 
 
