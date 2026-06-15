@@ -1,14 +1,20 @@
+import logging
+
 from fastapi import HTTPException, status
-from sqlalchemy.exc import SQLAlchemyError
+from sqlalchemy.exc import (
+    SQLAlchemyError,
+    IntegrityError
+)
 
 from app.models.models import User, UserRole
 from app.repositories.user_repository import UserRepository
-
 from app.core.security import (
     hash_password,
     verify_password,
     create_access_token
 )
+
+logger = logging.getLogger(__name__)
 
 
 class AuthService:
@@ -49,10 +55,37 @@ class AuthService:
         except HTTPException:
             raise
 
-        except SQLAlchemyError:
+        except IntegrityError as e:
+
+            logger.error(
+                f"IntegrityError while registering admin: {str(e)}"
+            )
+
             raise HTTPException(
-                status_code=500,
-                detail="Database error"
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already exists"
+            )
+
+        except SQLAlchemyError as e:
+
+            logger.exception(
+                f"Database error while registering admin: {str(e)}"
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred"
+            )
+
+        except Exception as e:
+
+            logger.exception(
+                f"Unexpected error while registering admin: {str(e)}"
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error"
             )
 
     async def register_user(self, db, payload):
@@ -88,10 +121,37 @@ class AuthService:
         except HTTPException:
             raise
 
-        except SQLAlchemyError:
+        except IntegrityError as e:
+
+            logger.error(
+                f"IntegrityError while registering user: {str(e)}"
+            )
+
             raise HTTPException(
-                status_code=500,
-                detail="Database error"
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Email already exists"
+            )
+
+        except SQLAlchemyError as e:
+
+            logger.exception(
+                f"Database error while registering user: {str(e)}"
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred"
+            )
+
+        except Exception as e:
+
+            logger.exception(
+                f"Unexpected error while registering user: {str(e)}"
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error"
             )
 
     async def login(self, db, payload):
@@ -115,7 +175,7 @@ class AuthService:
             ):
                 raise HTTPException(
                     status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid password"
+                    detail="Invalid credentials"
                 )
 
             token = create_access_token(
@@ -147,8 +207,24 @@ class AuthService:
         except HTTPException:
             raise
 
-        except Exception:
+        except SQLAlchemyError as e:
+
+            logger.exception(
+                f"Database error during login: {str(e)}"
+            )
+
             raise HTTPException(
-                status_code=500,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Database error occurred"
+            )
+
+        except Exception as e:
+
+            logger.exception(
+                f"Unexpected error during login: {str(e)}"
+            )
+
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Internal server error"
             )
