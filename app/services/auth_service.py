@@ -154,77 +154,87 @@ class AuthService:
                 detail="Internal server error"
             )
 
-    async def login(self, db, payload):
+    async def login(
+            self,
+            db,
+            payload,
+            required_role: UserRole
+        ):
+            try:
 
-        try:
-
-            user = await self.user_repo.get_by_email(
-                db,
-                payload.email
-            )
-
-            if not user:
-                raise HTTPException(
-                    status_code=status.HTTP_404_NOT_FOUND,
-                    detail="User not found"
+                user = await self.user_repo.get_by_email(
+                    db,
+                    payload.email
                 )
 
-            if not verify_password(
-                payload.password,
-                user.password_hash
-            ):
-                raise HTTPException(
-                    status_code=status.HTTP_401_UNAUTHORIZED,
-                    detail="Invalid credentials"
-                )
+                if not user:
+                    raise HTTPException(
+                        status_code=status.HTTP_404_NOT_FOUND,
+                        detail="User not found"
+                    )
 
-            token = create_access_token(
-                {
-                    "sub": str(user.id),
-                    "role": user.role.value,
-                    "email": user.email
-                }
-            )
+                if user.role != required_role:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail=f"{required_role.value.title()} access only"
+                    )
 
-            return {
-                "success": True,
-                "status_code": 200,
-                "message": "Login successful",
-                "data": {
-                    "access_token": token,
-                    "token_type": "bearer",
-                    "user": {
-                        "id": str(user.id),
-                        "full_name": user.full_name,
-                        "email": user.email,
-                        "phone": user.phone,
+                if not verify_password(
+                    payload.password,
+                    user.password_hash
+                ):
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid credentials"
+                    )
+
+                token = create_access_token(
+                    {
+                        "sub": str(user.id),
                         "role": user.role.value,
-                        "created_at": user.created_at
+                        "email": user.email
+                    }
+                )
+
+                return {
+                    "success": True,
+                    "status_code": 200,
+                    "message": "Login successful",
+                    "data": {
+                        "access_token": token,
+                        "token_type": "bearer",
+                        "user": {
+                            "id": str(user.id),
+                            "full_name": user.full_name,
+                            "email": user.email,
+                            "phone": user.phone,
+                            "role": user.role.value,
+                            "created_at": user.created_at
+                        }
                     }
                 }
-            }
 
-        except HTTPException:
-            raise
+            except HTTPException:
+                raise
 
-        except SQLAlchemyError as e:
+            except SQLAlchemyError as e:
 
-            logger.exception(
-                f"Database error during login: {str(e)}"
-            )
+                logger.exception(
+                    f"Database error during login: {str(e)}"
+                )
 
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Database error occurred"
-            )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Database error occurred"
+                )
 
-        except Exception as e:
+            except Exception as e:
 
-            logger.exception(
-                f"Unexpected error during login: {str(e)}"
-            )
+                logger.exception(
+                    f"Unexpected error during login: {str(e)}"
+                )
 
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error"
-            )
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Internal server error"
+                )

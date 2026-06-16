@@ -4,6 +4,10 @@ from fastapi import (
     HTTPException,
     UploadFile
 )
+from app.repositories.product_repository import (
+    ProductRepository
+)
+from app.repositories.product_repository import ProductRepository
 from app.core.storage import local_storage
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -320,8 +324,9 @@ class ProductService:
                     "thumbnail_url":
                     product.thumbnail_url,
 
-                    "rating": 0,
-                    "review_count": 0,
+                    "rating": float(product.rating or 0),
+                    "review_count": product.review_count or 0,
+
 
                     "is_featured":
                     product.is_featured,
@@ -450,8 +455,8 @@ class ProductService:
                 "hsn_code":
                 product.hsn_code,
 
-                "rating": 0,
-                "review_count": 0,
+                "rating": float(product.rating or 0),
+                "review_count": product.review_count or 0,
 
                 "is_featured":
                 product.is_featured,

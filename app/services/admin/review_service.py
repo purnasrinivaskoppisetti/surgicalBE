@@ -7,7 +7,9 @@ from app.models.models import (
 from app.repositories.review_repository import (
     ReviewRepository
 )
-
+from app.repositories.product_repository import (
+    ProductRepository
+)
 
 class AdminReviewService:
 
@@ -97,6 +99,12 @@ class AdminReviewService:
             review
         )
 
+        # Update product rating and review count
+        await ProductRepository.update_product_rating(
+            db,
+            review.product_id
+        )
+
         return {
             "success": True,
             "status_code": 200,
@@ -129,6 +137,11 @@ class AdminReviewService:
             review
         )
 
+        await ProductRepository.update_product_rating(
+            db,
+            review.product_id
+        )
+
         return {
             "success": True,
             "status_code": 200,
@@ -159,6 +172,11 @@ class AdminReviewService:
         await ReviewRepository.save(
             db,
             review
+        )
+
+        await ProductRepository.update_product_rating(
+            db,
+            review.product_id
         )
 
         return {

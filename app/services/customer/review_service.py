@@ -35,18 +35,6 @@ class ReviewService:
                 detail="You can review only delivered products that you purchased"
             )
 
-        existing_review = await ReviewRepository.get_user_review(
-            db=db,
-            user_id=user_id,
-            product_id=payload.product_id
-        )
-
-        if existing_review:
-            raise HTTPException(
-                status_code=400,
-                detail="Review already submitted for this product"
-            )
-
         review = Review(
             product_id=payload.product_id,
             user_id=user_id,

@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 from fastapi import Depends
 from fastapi import HTTPException
-
+from app.models.models import UserRole
 from app.db.session import get_db
 
 from app.schemas.auth_schema import (
@@ -82,7 +82,8 @@ async def admin_login(
 
     response = await service.login(
         db,
-        payload
+        payload,
+        UserRole.ADMIN
     )
 
     if response["data"]["user"]["role"] != "admin":
@@ -100,8 +101,8 @@ async def user_login(
     payload: LoginRequest,
     db=Depends(get_db)
 ):
-
     return await service.login(
         db,
-        payload
-    )
+        payload,
+        UserRole.CUSTOMER
+    )      

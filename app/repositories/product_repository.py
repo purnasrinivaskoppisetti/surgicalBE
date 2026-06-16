@@ -5,7 +5,7 @@ from sqlalchemy import (
     func,
     or_
 )
-
+from app.models.models import ReviewStatus
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from sqlalchemy.orm import joinedload
@@ -16,6 +16,7 @@ from app.models.models import (
     Category,
     ProductStatus,
     Review,
+    ReviewStatus,
     User
 )
 
@@ -274,3 +275,41 @@ class ProductRepository:
         )
 
         return result.unique().scalar_one_or_none()
+    
+
+
+    @staticmethod
+    async def update_product_rating(
+        db: AsyncSession,
+        product_id: UUID
+    ):
+        result = await db.execute(
+            select(
+                func.avg(Review.rating),
+                func.count(Review.id)
+            ).where(
+                Review.product_id == product_id,
+                Review.status == ReviewStatus.APPROVED
+            )
+        )
+
+        avg_rating, review_count = result.one()
+
+        product = await ProductRepository.get_by_id(
+            db,
+            product_id
+        )
+
+        if not product:
+            return
+
+        product.rating = float(
+            round(avg_rating or 0, 1)
+        )
+
+        product.review_count = review_count or 0
+
+        await db.commit()
+        await db.refresh(product)
+
+        return product

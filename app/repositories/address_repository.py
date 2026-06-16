@@ -1,6 +1,7 @@
 from uuid import UUID
 
 from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Address
@@ -13,10 +14,17 @@ class AddressRepository:
         db: AsyncSession,
         address: Address
     ):
-        db.add(address)
-        await db.commit()
-        await db.refresh(address)
-        return address
+        try:
+            db.add(address)
+
+            await db.commit()
+            await db.refresh(address)
+
+            return address
+
+        except SQLAlchemyError:
+            await db.rollback()
+            raise
 
     @staticmethod
     async def get_user_addresses(
@@ -25,7 +33,10 @@ class AddressRepository:
     ):
         result = await db.execute(
             select(Address)
-            .where(Address.user_id == user_id)
+            .where(
+                Address.user_id == user_id,
+                Address.is_deleted == False
+            )
             .order_by(Address.created_at.desc())
         )
 
@@ -41,7 +52,8 @@ class AddressRepository:
             select(Address)
             .where(
                 Address.id == address_id,
-                Address.user_id == user_id
+                Address.user_id == user_id,
+                Address.is_deleted == False
             )
         )
 
@@ -52,14 +64,30 @@ class AddressRepository:
         db: AsyncSession,
         address: Address
     ):
-        await db.commit()
-        await db.refresh(address)
-        return address
+        try:
+            await db.commit()
+            await db.refresh(address)
+
+            return address
+
+        except SQLAlchemyError:
+            await db.rollback()
+            raise
 
     @staticmethod
     async def delete(
         db: AsyncSession,
         address: Address
     ):
-        await db.delete(address)
-        await db.commit()
+        try:
+            # Soft Delete
+            address.is_deleted = True
+
+            await db.commit()
+            await db.refresh(address)
+
+            return address
+
+        except SQLAlchemyError:
+            await db.rollback()
+            raise

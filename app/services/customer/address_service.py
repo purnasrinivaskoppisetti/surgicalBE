@@ -1,15 +1,18 @@
+from sqlalchemy.exc import SQLAlchemyError
+
 from app.models.models import Address
 from app.repositories.address_repository import AddressRepository
 
 
 class AddressService:
-        @staticmethod
-        async def create_address(
-            db,
-            user_id,
-            payload
-        ):
 
+    @staticmethod
+    async def create_address(
+        db,
+        user_id,
+        payload
+    ):
+        try:
             address = Address(
                 user_id=user_id,
                 full_name=payload.full_name,
@@ -40,17 +43,22 @@ class AddressService:
                 }
             }
 
-        @staticmethod
-        async def get_addresses(
-            db,
-            user_id
-        ):
+        except SQLAlchemyError:
+            return {
+                "success": False,
+                "status_code": 500,
+                "message": "Failed to create address"
+            }
 
-            addresses = await (
-                AddressRepository.get_user_addresses(
-                    db,
-                    user_id
-                )
+    @staticmethod
+    async def get_addresses(
+        db,
+        user_id
+    ):
+        try:
+            addresses = await AddressRepository.get_user_addresses(
+                db,
+                user_id
             )
 
             return {
@@ -73,19 +81,24 @@ class AddressService:
                 ]
             }
 
-        @staticmethod
-        async def get_address(
-            db,
-            user_id,
-            address_id
-        ):
+        except SQLAlchemyError:
+            return {
+                "success": False,
+                "status_code": 500,
+                "message": "Failed to fetch addresses"
+            }
 
-            address = await (
-                AddressRepository.get_by_id(
-                    db,
-                    address_id,
-                    user_id
-                )
+    @staticmethod
+    async def get_address(
+        db,
+        user_id,
+        address_id
+    ):
+        try:
+            address = await AddressRepository.get_by_id(
+                db,
+                address_id,
+                user_id
             )
 
             if not address:
@@ -97,6 +110,7 @@ class AddressService:
 
             return {
                 "success": True,
+                "status_code": 200,
                 "data": {
                     "id": str(address.id),
                     "full_name": address.full_name,
@@ -111,20 +125,25 @@ class AddressService:
                 }
             }
 
-        @staticmethod
-        async def update_address(
-            db,
-            user_id,
-            address_id,
-            payload
-        ):
+        except SQLAlchemyError:
+            return {
+                "success": False,
+                "status_code": 500,
+                "message": "Failed to fetch address"
+            }
 
-            address = await (
-                AddressRepository.get_by_id(
-                    db,
-                    address_id,
-                    user_id
-                )
+    @staticmethod
+    async def update_address(
+        db,
+        user_id,
+        address_id,
+        payload
+    ):
+        try:
+            address = await AddressRepository.get_by_id(
+                db,
+                address_id,
+                user_id
             )
 
             if not address:
@@ -155,19 +174,24 @@ class AddressService:
                 "message": "Address updated successfully"
             }
 
-        @staticmethod
-        async def delete_address(
-            db,
-            user_id,
-            address_id
-        ):
+        except SQLAlchemyError:
+            return {
+                "success": False,
+                "status_code": 500,
+                "message": "Failed to update address"
+            }
 
-            address = await (
-                AddressRepository.get_by_id(
-                    db,
-                    address_id,
-                    user_id
-                )
+    @staticmethod
+    async def delete_address(
+        db,
+        user_id,
+        address_id
+    ):
+        try:
+            address = await AddressRepository.get_by_id(
+                db,
+                address_id,
+                user_id
             )
 
             if not address:
@@ -186,4 +210,11 @@ class AddressService:
                 "success": True,
                 "status_code": 200,
                 "message": "Address deleted successfully"
+            }
+
+        except SQLAlchemyError:
+            return {
+                "success": False,
+                "status_code": 500,
+                "message": "Failed to delete address"
             }

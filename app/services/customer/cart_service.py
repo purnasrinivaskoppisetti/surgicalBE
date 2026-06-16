@@ -1,26 +1,19 @@
 from uuid import UUID
-
-from app.models.models import CartItem
-
-from app.repositories.cart_repository import (
-    CartRepository
-)
 from decimal import Decimal
 
+from fastapi import HTTPException
+from sqlalchemy.exc import SQLAlchemyError
+
+from app.models.models import CartItem
 from app.repositories.cart_repository import CartRepository
 from app.repositories.coupon_repository import CouponRepository
 from app.repositories.setting_repository import SettingRepository
-
-
-from app.repositories.product_repository import (
-    ProductRepository
-)
-
+from app.repositories.product_repository import ProductRepository
 from app.utils.pagination import build_pagination
-
 
 class CartService:
 
+        
         @staticmethod
         async def add_to_cart(
             db,
@@ -28,94 +21,97 @@ class CartService:
             product_id: UUID,
             quantity: int
         ):
+            try:
 
-            product = await ProductRepository.get_by_id(
-                db,
-                product_id
-            )
-
-            if not product:
-                return {
-                    "success": False,
-                    "status_code": 404,
-                    "message": "Product not found"
-                }
-
-            if product.stock_qty <= 0:
-                return {
-                    "success": False,
-                    "status_code": 400,
-                    "message": "Product is out of stock"
-                }
-
-            if quantity <= 0:
-                return {
-                    "success": False,
-                    "status_code": 400,
-                    "message": "Quantity must be greater than zero"
-                }
-
-            if quantity > product.stock_qty:
-                return {
-                    "success": False,
-                    "status_code": 400,
-                    "message": f"Only {product.stock_qty} item(s) available in stock",
-                    "data": {
-                        "available_stock": product.stock_qty,
-                        "requested_quantity": quantity
-                    }
-                }
-
-            existing = await CartRepository.get_by_user_and_product(
-                db,
-                user_id,
-                product_id
-            )
-
-            # Product already exists in cart
-            if existing:
-
-                # REPLACE quantity instead of ADDING
-                existing.quantity = quantity
-
-                await CartRepository.update(
+                product = await ProductRepository.get_by_id(
                     db,
-                    existing
+                    product_id
+                )
+
+                if not product:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Product not found"
+                    )
+
+                if product.stock_qty <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Product is out of stock"
+                    )
+
+                if quantity <= 0:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Quantity must be greater than zero"
+                    )
+
+                if quantity > product.stock_qty:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Only {product.stock_qty} item(s) available in stock"
+                    )
+
+                existing = await CartRepository.get_by_user_and_product(
+                    db,
+                    user_id,
+                    product_id
+                )
+
+                if existing:
+
+                    existing.quantity = quantity
+
+                    await CartRepository.update(
+                        db,
+                        existing
+                    )
+
+                    return {
+                        "success": True,
+                        "status_code": 200,
+                        "message": "Cart quantity updated successfully",
+                        "data": {
+                            "product_id": str(product.id),
+                            "quantity": existing.quantity
+                        }
+                    }
+
+                cart_item = CartItem(
+                    user_id=user_id,
+                    product_id=product_id,
+                    quantity=quantity
+                )
+
+                await CartRepository.create(
+                    db,
+                    cart_item
                 )
 
                 return {
                     "success": True,
-                    "status_code": 200,
-                    "message": "Cart quantity updated successfully",
+                    "status_code": 201,
+                    "message": "Product added to cart",
                     "data": {
                         "product_id": str(product.id),
-                        "quantity": existing.quantity
+                        "quantity": quantity
                     }
                 }
 
-            # New cart item
-            cart_item = CartItem(
-                user_id=user_id,
-                product_id=product_id,
-                quantity=quantity
-            )
+            except HTTPException:
+                raise
 
-            await CartRepository.create(
-                db,
-                cart_item
-            )
+            except SQLAlchemyError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Database error while adding product to cart"
+                )
 
-            return {
-                "success": True,
-                "status_code": 201,
-                "message": "Product added to cart",
-                "data": {
-                    "product_id": str(product.id),
-                    "quantity": quantity
-                }
-            }
-
-
+            except Exception:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Something went wrong"
+                )
         @staticmethod
         async def get_cart(
             db,
@@ -231,32 +227,45 @@ class CartService:
             user_id: UUID,
             product_id: UUID
         ):
+            try:
 
-            item = await CartRepository.get_by_user_and_product(
-                db,
-                user_id,
-                product_id
-            )
+                item = await CartRepository.get_by_user_and_product(
+                    db,
+                    user_id,
+                    product_id
+                )
 
-            if not item:
+                if not item:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Product not found in cart"
+                    )
+
+                await CartRepository.delete(
+                    db,
+                    item
+                )
 
                 return {
-                    "success": False,
-                    "status_code": 404,
-                    "message": "Product not found in cart"
+                    "success": True,
+                    "status_code": 200,
+                    "message": "Product removed from cart"
                 }
 
-            await CartRepository.delete(
-                db,
-                item
-            )
+            except HTTPException:
+                raise
 
-            return {
-                "success": True,
-                "status_code": 200,
-                "message": "Product removed from cart"
-            }
-        
+            except SQLAlchemyError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Database error while removing product from cart"
+                )
+
+            except Exception:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Something went wrong"
+                )
 
 
 
@@ -470,51 +479,59 @@ class CartService:
             user_id,
             coupon_code
         ):
+            try:
 
-            summary = await CartService.get_cart_summary(
-                db=db,
-                user_id=user_id
-            )
+                summary = await CartService.get_cart_summary(
+                    db=db,
+                    user_id=user_id
+                )
 
-            coupons = summary["data"]["available_coupons"]
+                coupons = summary["data"]["available_coupons"]
 
-            selected_coupon = next(
-                (
-                    coupon
-                    for coupon in coupons
-                    if coupon["coupon_code"] == coupon_code
-                ),
-                None
-            )
+                selected_coupon = next(
+                    (
+                        coupon
+                        for coupon in coupons
+                        if coupon["coupon_code"] == coupon_code
+                    ),
+                    None
+                )
 
-            if not selected_coupon:
+                if not selected_coupon:
+                    raise HTTPException(
+                        status_code=404,
+                        detail="Coupon not found"
+                    )
+
+                if not selected_coupon["is_applicable"]:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=selected_coupon["reason"]
+                    )
 
                 return {
-                    "success": False,
-                    "status_code": 404,
-                    "message": "Coupon not found"
-                }
-
-            if not selected_coupon["is_applicable"]:
-
-                return {
-                    "success": False,
-                    "status_code": 400,
-                    "message": "Coupon is not applicable",
+                    "success": True,
+                    "status_code": 200,
+                    "message": "Coupon applied successfully",
                     "data": {
+                        "coupon_id": selected_coupon["coupon_id"],
                         "coupon_code": selected_coupon["coupon_code"],
-                        "reason": selected_coupon["reason"]
+                        "discount_amount": selected_coupon["discount_amount"],
+                        "payable_amount": selected_coupon["payable_amount"]
                     }
                 }
 
-            return {
-                "success": True,
-                "status_code": 200,
-                "message": "Coupon applied successfully",
-                "data": {
-                    "coupon_id": selected_coupon["coupon_id"],
-                    "coupon_code": selected_coupon["coupon_code"],
-                    "discount_amount": selected_coupon["discount_amount"],
-                    "payable_amount": selected_coupon["payable_amount"]
-                }
-            }
+            except HTTPException:
+                raise
+
+            except SQLAlchemyError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Database error while applying coupon"
+                )
+
+            except Exception:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Something went wrong"
+                )
