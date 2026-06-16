@@ -4,7 +4,6 @@ from fastapi import HTTPException
 from razorpay.errors import SignatureVerificationError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.config import settings
 from app.core.razorpay import client
 
 from app.models.models import (
@@ -22,6 +21,7 @@ class BillingService:
     @staticmethod
     async def create_payment(
         db: AsyncSession,
+        user_id,
         order_id
     ):
 
@@ -36,6 +36,12 @@ class BillingService:
                 detail="Order not found"
             )
 
+        if str(order.user_id) != str(user_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
+            )
+
         payment = await BillRepository.get_payment_by_order(
             db,
             order.id
@@ -47,47 +53,74 @@ class BillingService:
                 detail="Payment not found"
             )
 
-        razorpay_order = client.order.create({
-            "amount": int(float(order.total_amount) * 100),
-            "currency": "INR",
-            "receipt": order.order_number
-        })
+        razorpay_order = client.order.create(
+            {
+                "amount": int(float(order.total_amount) * 100),
+                "currency": "INR",
+                "receipt": order.order_number
+            }
+        )
 
         payment.gateway_order_id = razorpay_order["id"]
 
         await db.commit()
 
         return {
-            "order_id": order.id,
-            "razorpay_order_id": razorpay_order["id"],
-            "amount": razorpay_order["amount"],
-            "currency": razorpay_order["currency"]
+            "success": True,
+            "status_code": 200,
+            "message": "Payment order created successfully",
+            "data": {
+                "order_id": str(order.id),
+                "razorpay_order_id": razorpay_order["id"],
+                "amount": razorpay_order["amount"],
+                "currency": razorpay_order["currency"]
+            }
         }
 
     @staticmethod
     async def verify_payment(
         db: AsyncSession,
+        user_id,
         payload
     ):
 
         try:
 
-            client.utility.verify_payment_signature({
-                "razorpay_order_id":
-                payload.razorpay_order_id,
+            client.utility.verify_payment_signature(
+                {
+                    "razorpay_order_id":
+                    payload.razorpay_order_id,
 
-                "razorpay_payment_id":
-                payload.razorpay_payment_id,
+                    "razorpay_payment_id":
+                    payload.razorpay_payment_id,
 
-                "razorpay_signature":
-                payload.razorpay_signature
-            })
+                    "razorpay_signature":
+                    payload.razorpay_signature
+                }
+            )
 
         except SignatureVerificationError:
 
             raise HTTPException(
                 status_code=400,
                 detail="Invalid payment signature"
+            )
+
+        order = await BillRepository.get_order(
+            db,
+            payload.order_id
+        )
+
+        if not order:
+            raise HTTPException(
+                status_code=404,
+                detail="Order not found"
+            )
+
+        if str(order.user_id) != str(user_id):
+            raise HTTPException(
+                status_code=403,
+                detail="Access denied"
             )
 
         payment = await BillRepository.get_payment_by_order(
@@ -100,11 +133,6 @@ class BillingService:
                 status_code=404,
                 detail="Payment not found"
             )
-
-        order = await BillRepository.get_order(
-            db,
-            payload.order_id
-        )
 
         payment.status = PaymentStatus.PAID
 
@@ -123,12 +151,12 @@ class BillingService:
         payment.paid_at = datetime.utcnow()
 
         order.payment_status = PaymentStatus.PAID
-
         order.status = OrderStatus.CONFIRMED
 
         await db.commit()
 
         return {
             "success": True,
+            "status_code": 200,
             "message": "Payment successful"
         }
