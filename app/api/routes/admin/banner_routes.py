@@ -15,9 +15,9 @@ from app.core.dependencies import get_current_admin
 from app.core.storage import local_storage
 
 from app.schemas.admin.common_schema import ApiResponse
+from app.schemas.admin.banner_schema import BannerResponse
 
 from app.services.admin.banner_service import BannerService
-
 
 router = APIRouter(
     prefix="/admin/settings",
@@ -36,26 +36,16 @@ async def create_banner(
     sort_order: int = Form(0),
     is_active: bool = Form(True),
     image: UploadFile = File(...),
-    mobile_image: UploadFile = File(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
 
-    image_url = await local_storage.upload_banner_image(
-        image
-    )
-
-    mobile_image_url = None
-
-    if mobile_image:
-        mobile_image_url = await local_storage.upload_banner_image(
-            mobile_image
-        )
+    image_url = await local_storage.upload_banner_image(image)
 
     banner = await BannerService.create_banner(
         db=db,
         image_url=image_url,
-        mobile_image_url=mobile_image_url,
+        mobile_image_url=None,
         request=type(
             "",
             (),
@@ -70,11 +60,11 @@ async def create_banner(
     )
 
     return ApiResponse(
-        success=True,
-        status_code=201,
-        message="Banner created successfully",
-        data=banner
-    )
+            success=True,
+            status_code=201,
+            message="Banner created successfully",
+            data=BannerResponse.model_validate(banner).model_dump()
+        )
 
 
 @router.get(
@@ -86,15 +76,16 @@ async def get_banners(
     admin=Depends(get_current_admin)
 ):
 
-    banners = await BannerService.get_all_banners(
-        db
-    )
+    banners = await BannerService.get_all_banners(db)
 
     return ApiResponse(
         success=True,
         status_code=200,
         message="Banner list",
-        data=banners
+        data=[
+            BannerResponse.model_validate(item)
+            for item in banners
+        ]
     )
 
 
@@ -113,12 +104,20 @@ async def get_banner(
         banner_id
     )
 
+    if not banner:
+        return ApiResponse(
+            success=False,
+            status_code=404,
+            message="Banner not found",
+            data=None
+        )
+
     return ApiResponse(
-        success=True,
-        status_code=200,
-        message="Banner details",
-        data=banner
-    )
+            success=True,
+            status_code=200,
+            message="Banner details",
+            data=BannerResponse.model_validate(banner).model_dump()
+        )
 
 
 @router.patch(
@@ -133,23 +132,14 @@ async def update_banner(
     sort_order: int = Form(0),
     is_active: bool = Form(True),
     image: UploadFile = File(None),
-    mobile_image: UploadFile = File(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
 
     image_url = None
-    mobile_image_url = None
 
     if image:
-        image_url = await local_storage.upload_banner_image(
-            image
-        )
-
-    if mobile_image:
-        mobile_image_url = await local_storage.upload_banner_image(
-            mobile_image
-        )
+        image_url = await local_storage.upload_banner_image(image)
 
     banner = await BannerService.update_banner(
         db=db,
@@ -166,15 +156,23 @@ async def update_banner(
             }
         ),
         image_url=image_url,
-        mobile_image_url=mobile_image_url
+        mobile_image_url=None
     )
 
+    if not banner:
+        return ApiResponse(
+            success=False,
+            status_code=404,
+            message="Banner not found",
+            data=None
+        )
+
     return ApiResponse(
-        success=True,
-        status_code=200,
-        message="Banner updated successfully",
-        data=banner
-    )
+            success=True,
+            status_code=200,
+            message="Banner updated successfully",
+            data=BannerResponse.model_validate(banner).model_dump()
+        )
 
 
 @router.delete(

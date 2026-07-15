@@ -11,14 +11,17 @@ class BannerRequest(BaseModel):
     is_active: bool = True
 
 
+from pydantic import BaseModel, ConfigDict
+
+
 class BannerResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
     id: UUID
     title: str
-    subtitle: Optional[str]
+    subtitle: Optional[str] = None
     image_url: str
-    mobile_image_url: Optional[str]
-    redirect_url: Optional[str]
+    mobile_image_url: Optional[str] = None
+    redirect_url: Optional[str] = None
     sort_order: int
-
-    class Config:
-        from_attributes = True
+    is_active: bool
