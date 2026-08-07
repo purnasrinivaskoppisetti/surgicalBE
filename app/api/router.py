@@ -25,8 +25,8 @@ from app.api.routes.shop.billing_routes import (router as billing_router)
 from app.api.routes.admin.banner_routes import router as banner_router
 from app.api.routes.store.banner_routes import router as store_banner_router
 
-
 from app.api.routes.admin import shipment_routes as admin_shipping
+from app.api.routes.customer import router as customer_shipping
 '''from app.api.routes.admin.dashboard_routes import router as dashboard_router
 from app.api.routes.admin.inventory_routes import router as inventory_router
 from app.api.routes.admin.order_routes import router as admin_order_router
@@ -82,6 +82,7 @@ api_router.include_router(category_icon_routes)
 api_router.include_router(customer_order_router)
 api_router.include_router(review_router)
 api_router.include_router(billing_router)
+api_router.include_router(customer_shipping)
 
 api_router.include_router(admin_shipping.router)
 '''
