@@ -26,7 +26,7 @@ from app.api.routes.admin.banner_routes import router as banner_router
 from app.api.routes.store.banner_routes import router as store_banner_router
 
 from app.api.routes.admin import shipment_routes as admin_shipping
-from app.api.routes.customer import router as customer_shipping
+from app.api.routes.customer.shipping_routes import router as customer_shipping
 '''from app.api.routes.admin.dashboard_routes import router as dashboard_router
 from app.api.routes.admin.inventory_routes import router as inventory_router
 from app.api.routes.admin.order_routes import router as admin_order_router
