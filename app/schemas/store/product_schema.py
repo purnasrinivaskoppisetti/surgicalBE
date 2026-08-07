@@ -33,6 +33,13 @@ class ProductListResponse(BaseModel):
     mrp: float
     sale_price: float
     stock_qty: int
+
+    # --- Added Package Dimensions & Weight ---
+    weight: Optional[float] = 0.0  # Weight in kg
+    length: Optional[float] = 0.0  # Length in cm
+    breadth: Optional[float] = 0.0  # Breadth in cm
+    height: Optional[float] = 0.0  # Height in cm
+
     thumbnail_url: Optional[str]
     is_featured: bool
     is_bestseller: bool
@@ -58,6 +65,13 @@ class ProductDetailResponse(BaseModel):
     sale_price: float
 
     stock_qty: int
+
+    # --- Added Package Dimensions & Weight ---
+    weight: Optional[float] = 0.0  # Weight in kg
+    length: Optional[float] = 0.0  # Length in cm
+    breadth: Optional[float] = 0.0  # Breadth in cm
+    height: Optional[float] = 0.0  # Height in cm
+
     thumbnail_url: Optional[str]
 
     manufacturer: Optional[str]

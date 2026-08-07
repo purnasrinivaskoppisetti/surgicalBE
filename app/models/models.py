@@ -155,6 +155,10 @@ class Product(Base):
     mrp: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     sale_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), nullable=False)
     stock_qty: Mapped[int] = mapped_column(Integer, default=0)
+    weight: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), default=0.0) # Weight in kg
+    length: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), default=0.0) # Length in cm
+    breadth: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), default=0.0) # Breadth in cm
+    height: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), default=0.0) # Height in cm
     thumbnail_url: Mapped[str | None] = mapped_column(Text, default=None)
     status: Mapped[ProductStatus] = mapped_column(SQLEnum(ProductStatus), default=ProductStatus.ACTIVE, index=True)
     is_featured: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -349,6 +353,7 @@ class Order(Base):
     items = relationship("OrderItem", back_populates="order", cascade="all, delete-orphan")
     tickets = relationship("SupportTicket", back_populates="order")
     payments = relationship("Payment", back_populates="order", cascade="all, delete-orphan")
+    shipments = relationship("Shipment", back_populates="order", cascade="all, delete-orphan")
 
 class OrderItem(Base):
     __tablename__ = "order_items"
@@ -488,28 +493,85 @@ class OrderStatusHistory(Base):
 class Shipment(Base):
     __tablename__ = "shipments"
 
-    id = mapped_column(
-        UUID(as_uuid=True),
-        primary_key=True,
-        default=uuid.uuid4
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=generate_uuid
+    )
+    order_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("orders.id", ondelete="CASCADE"), index=True
+    )
+    courier_name: Mapped[str] = mapped_column(
+        String(100), default="Blue Dart"
+    )
+    
+    # --- Tracking / AWB Details ---
+    tracking_number: Mapped[str | None] = mapped_column(
+        String(100), unique=True, index=True
+    )  # Waybill / AWB Number (e.g. "77113180476")
+    
+    # --- Blue Dart Product Metadata ---
+    product_code: Mapped[str | None] = mapped_column(String(10), default="A")      # e.g., "A" (Apex)
+    sub_product_code: Mapped[str | None] = mapped_column(String(10), default="P")  # e.g., "P" (Prepaid)
+    pack_type: Mapped[str | None] = mapped_column(String(10), default="L")         # e.g., "L" (Box/Large)
+    
+    # --- Blue Dart Waybill API Response Fields ---
+    pickup_token_number: Mapped[str | None] = mapped_column(String(50))   # e.g., "3535829"
+    cluster_code: Mapped[str | None] = mapped_column(String(20))           # e.g., "VJH"
+    origin_area: Mapped[str | None] = mapped_column(String(20))            # e.g., "GUN"
+    destination_area: Mapped[str | None] = mapped_column(String(20))       # e.g., "PLZ"
+    destination_location: Mapped[str | None] = mapped_column(String(100)) # e.g., "PLZ"
+    mps_details: Mapped[dict | list | None] = mapped_column(JSON)           # Stores multi-piece shipment arrays
+    
+    # --- PDF Downloads & Raw Base64 Content ---
+    awb_pdf_url: Mapped[str | None] = mapped_column(Text)
+    label_pdf_url: Mapped[str | None] = mapped_column(Text)
+    awb_print_content: Mapped[str | None] = mapped_column(Text)           # Stores raw AWB Base64 String if direct S3 uploading is skipped
+    
+    # --- Dimensions & Weight ---
+    actual_weight: Mapped[Decimal | None] = mapped_column(Numeric(8, 2), default=0.5)
+    length: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    breadth: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    height: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))
+    piece_count: Mapped[int] = mapped_column(Integer, default=1)
+
+    # --- Status Tracking ---
+    status: Mapped[str | None] = mapped_column(String(100), default="PICKUP HAS BEEN REGISTERED")
+    status_code: Mapped[str | None] = mapped_column(String(50))             # e.g., "PU", "500", "DL"
+    last_scanned_location: Mapped[str | None] = mapped_column(String(255))  # e.g., "YOUSUFGUDA, SECUNDERABAD"
+    last_scanned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    
+    estimated_delivery: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    shipped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+    # --- Relationships ---
+    order = relationship("Order", back_populates="shipments")
+    scan_logs = relationship("ShipmentScanLog", back_populates="shipment", cascade="all, delete-orphan")
+
+
+class ShipmentScanLog(Base):
+    __tablename__ = "shipment_scan_logs"
+
+    __table_args__ = (
+        UniqueConstraint("shipment_id", "scan_code", "scanned_at", name="uq_shipment_scan_event"),
     )
 
-    order_id = mapped_column(
-        ForeignKey("orders.id")
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=generate_uuid
     )
+    shipment_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("shipments.id", ondelete="CASCADE"), index=True
+    )
+    
+    scan_status: Mapped[str] = mapped_column(String(255))          # e.g., "PICKUP HAS BEEN REGISTERED"
+    scan_code: Mapped[str | None] = mapped_column(String(50))      # e.g., "500", "030"
+    scan_type: Mapped[str | None] = mapped_column(String(20))      # e.g., "PU", "DL", "UD"
+    scan_group_type: Mapped[str | None] = mapped_column(String(20))
+    scanned_location: Mapped[str | None] = mapped_column(String(255)) # e.g., "YOUSUFGUDA, SECUNDERABAD"
+    
+    scanned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
-    courier_name = mapped_column(
-        String(100)
-    )
-
-    tracking_number = mapped_column(
-        String(100)
-    )
-
-    estimated_delivery = mapped_column(
-        DateTime(timezone=True)
-    )
-
-    shipped_at = mapped_column(
-        DateTime(timezone=True)
-    )
+    shipment = relationship("Shipment", back_populates="scan_logs")

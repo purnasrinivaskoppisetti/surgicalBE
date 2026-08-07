@@ -3,7 +3,6 @@ from uuid import UUID
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.repositories.category_repository import CategoryRepository
-
 from app.repositories.product_repository import ProductRepository
 from app.utils.pagination import build_pagination
 
@@ -63,62 +62,68 @@ class ProductService:
             ) if review_count > 0 else 0
 
             response_data.append(
+                {
+                    "id": str(product.id),
+
+                    "category_id": (
+                        str(product.category_id)
+                        if product.category_id else None
+                    ),
+
+                    "category_name": (
+                        product.category.name
+                        if product.category
+                        else None
+                    ),
+
+                    "category_slug": (
+                        product.category.slug
+                        if product.category
+                        else None
+                    ),
+
+                    "name": product.name,
+                    "slug": product.slug,
+                    "sku": product.sku,
+                    "brand": product.brand,
+                    "short_description": product.short_description,
+
+                    "mrp": str(product.mrp),
+                    "sale_price": str(product.sale_price),
+                    "discount_percentage": discount_percentage,
+
+                    "stock_qty": product.stock_qty,
+                    "stock_status": stock_status,
+
+                    # --- Package Dimensions & Weight ---
+                    "weight": float(product.weight or 0),
+                    "length": float(product.length or 0),
+                    "breadth": float(product.breadth or 0),
+                    "height": float(product.height or 0),
+
+                    "thumbnail_url": product.thumbnail_url,
+
+                    # Dynamic Rating
+                    "rating": average_rating,
+                    "review_count": review_count,
+
+                    "is_featured": product.is_featured,
+                    "is_bestseller": product.is_bestseller,
+                    "is_new_arrival": product.is_new_arrival,
+
+                    "created_at": product.created_at,
+
+                    "images": [
                         {
-                            "id": str(product.id),
-
-                            "category_id": (
-                                str(product.category_id)
-                                if product.category_id else None
-                            ),
-
-                            "category_name": (
-                                product.category.name
-                                if product.category
-                                else None
-                            ),
-
-                            "category_slug": (
-                                product.category.slug
-                                if product.category
-                                else None
-                            ),
-
-                            "name": product.name,
-                            "slug": product.slug,
-                            "sku": product.sku,
-                            "brand": product.brand,
-                            "short_description": product.short_description,
-
-                            "mrp": str(product.mrp),
-                            "sale_price": str(product.sale_price),
-                            "discount_percentage": discount_percentage,
-
-                            "stock_qty": product.stock_qty,
-                            "stock_status": stock_status,
-
-                            "thumbnail_url": product.thumbnail_url,
-
-                            # Dynamic Rating
-                            "rating": average_rating,
-                            "review_count": review_count,
-
-                            "is_featured": product.is_featured,
-                            "is_bestseller": product.is_bestseller,
-                            "is_new_arrival": product.is_new_arrival,
-
-                            "created_at": product.created_at,
-
-                            "images": [
-                                {
-                                    "id": str(img.id),
-                                    "image_url": img.image_url,
-                                    "is_primary": img.is_primary,
-                                    "sort_order": img.sort_order
-                                }
-                                for img in product.images
-                            ]
+                            "id": str(img.id),
+                            "image_url": img.image_url,
+                            "is_primary": img.is_primary,
+                            "sort_order": img.sort_order
                         }
-                    )
+                        for img in product.images
+                    ]
+                }
+            )
 
         return {
             "success": True,
@@ -223,6 +228,12 @@ class ProductService:
                 "stock_qty": product.stock_qty,
                 "stock_status": stock_status,
 
+                # --- Package Dimensions & Weight ---
+                "weight": float(product.weight or 0),
+                "length": float(product.length or 0),
+                "breadth": float(product.breadth or 0),
+                "height": float(product.height or 0),
+
                 "thumbnail_url": product.thumbnail_url,
 
                 "manufacturer": product.manufacturer,
@@ -230,8 +241,18 @@ class ProductService:
 
                 "status": product.status.value,
 
-                "rating": str(product.rating),
-                "review_count": product.review_count,
+                "rating": average_rating,
+                "review_count": review_count,
+
+                "rating_summary": {
+                    "average_rating": average_rating,
+                    "total_reviews": review_count,
+                    "five_star": rating_breakdown["5_star"],
+                    "four_star": rating_breakdown["4_star"],
+                    "three_star": rating_breakdown["3_star"],
+                    "two_star": rating_breakdown["2_star"],
+                    "one_star": rating_breakdown["1_star"]
+                },
 
                 "is_featured": product.is_featured,
                 "is_bestseller": product.is_bestseller,
@@ -259,54 +280,15 @@ class ProductService:
                 "reviews": [
                     {
                         "id": str(review.id),
-
                         "user": {
                             "id": str(review.user.id),
                             "name": review.user.full_name
                         },
-
-                        "rating": average_rating,
-                        "review_count": review_count,
-
-                        "rating_summary": {
-                            "average_rating": average_rating,
-                            "total_reviews": review_count,
-                            "five_star": rating_breakdown["5_star"],
-                            "four_star": rating_breakdown["4_star"],
-                            "three_star": rating_breakdown["3_star"],
-                            "two_star": rating_breakdown["2_star"],
-                            "one_star": rating_breakdown["1_star"]
-                        },
-                        "reviews": [
-                                    {
-                                        "id": str(review.id),
-
-                                        "user": {
-                                            "id": str(review.user.id),
-                                            "name": review.user.full_name
-                                        },
-
-                                        "rating": review.rating,
-                                        "review_text": review.review_text,
-
-                                        "image_url": review.image_url,
-
-                                        "is_verified_purchase":
-                                            review.is_verified_purchase,
-
-                                        "created_at":
-                                            review.created_at
-                                    }
-                                    for review in approved_reviews
-                                ],
-
+                        "rating": review.rating,
+                        "review_text": review.review_text,
                         "image_url": review.image_url,
-
-                        "is_verified_purchase":
-                            review.is_verified_purchase,
-
-                        "created_at":
-                            review.created_at
+                        "is_verified_purchase": review.is_verified_purchase,
+                        "created_at": review.created_at
                     }
                     for review in approved_reviews
                 ],

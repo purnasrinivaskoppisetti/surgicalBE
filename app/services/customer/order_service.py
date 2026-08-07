@@ -1,5 +1,4 @@
 import uuid
-
 from decimal import Decimal
 
 from app.models.models import (
@@ -10,588 +9,350 @@ from app.models.models import (
     OrderStatus,
     PaymentStatus
 )
-
-from app.repositories.cart_repository import (
-    CartRepository
-)
-
-from app.repositories.order_repository import (
-    OrderRepository
-)
-
-from app.repositories.coupon_repository import (
-    CouponRepository
-)
-
-from app.repositories.setting_repository import (
-    SettingRepository
-)
+from app.repositories.cart_repository import CartRepository
+from app.repositories.order_repository import OrderRepository
+from app.repositories.coupon_repository import CouponRepository
+from app.repositories.setting_repository import SettingRepository
 
 
-import uuid
-
-from decimal import Decimal
-
-from app.models.models import (
-    Order,
-    OrderItem,
-    Payment,
-    OrderStatus,
-    PaymentStatus
-)
 class OrderService:
-        @staticmethod
-        async def create_order(
-            db,
-            user_id,
-            payload
-        ):
 
-            cart_items = await (
-                CartRepository.get_all_cart_items(
-                    db,
-                    user_id
-                )
-            )
+    @staticmethod
+    async def create_order(db, user_id, payload):
+        cart_items = await CartRepository.get_all_cart_items(db, user_id)
 
-            if not cart_items:
+        if not cart_items:
+            return {
+                "success": False,
+                "status_code": 400,
+                "message": "Cart is empty"
+            }
 
+        # --- Stock Pre-Check ---
+        for item in cart_items:
+            if item.product.stock_qty < item.quantity:
                 return {
                     "success": False,
                     "status_code": 400,
-                    "message": "Cart is empty"
+                    "message": f"Insufficient stock for '{item.product.name}'"
                 }
 
-            subtotal = Decimal("0")
+        subtotal = Decimal("0")
+        for item in cart_items:
+            subtotal += item.product.sale_price * item.quantity
 
-            for item in cart_items:
+        settings = await SettingRepository.get_settings(db)
+        shipping_charge = Decimal("0")
 
-                subtotal += (
-                    item.product.sale_price *
-                    item.quantity
-                )
+        if settings and subtotal < settings.free_shipping_threshold:
+            shipping_charge = settings.delivery_charge
 
-            settings = await (
-                SettingRepository.get_settings(
-                    db
-                )
-            )
+        discount = Decimal("0")
+        coupon = None
 
-            shipping_charge = Decimal("0")
+        if payload.coupon_code:
+            coupon = await CouponRepository.get_coupon_by_code(db, payload.coupon_code)
+            if coupon:
+                if coupon.coupon_type.value == "flat":
+                    discount = coupon.discount_value
+                elif coupon.coupon_type.value == "percentage":
+                    discount = (subtotal * coupon.discount_value) / Decimal("100")
 
-            if (
-                settings and
-                subtotal <
-                settings.free_shipping_threshold
-            ):
-                shipping_charge = (
-                    settings.delivery_charge
-                )
+        total_amount = max(Decimal("0"), subtotal + shipping_charge - discount)
 
-            discount = Decimal("0")
-            coupon = None
+        order = Order(
+            order_number=f"SW-{uuid.uuid4().hex[:10].upper()}",
+            user_id=user_id,
+            address_id=payload.address_id,
+            coupon_id=coupon.id if coupon else None,
+            coupon_code=coupon.code if coupon else None,
+            subtotal=subtotal,
+            gst_amount=Decimal("0"),
+            shipping_charge=shipping_charge,
+            discount=discount,
+            total_amount=total_amount,
+            status=OrderStatus.PENDING,
+            payment_status=PaymentStatus.PENDING
+        )
 
-            if payload.coupon_code:
+        await OrderRepository.create_order(db, order)
 
-                coupon = await (
-                    CouponRepository.get_coupon_by_code(
-                        db,
-                        payload.coupon_code
-                    )
-                )
-
-                if coupon:
-
-                    if (
-                        coupon.coupon_type.value ==
-                        "flat"
-                    ):
-
-                        discount = (
-                            coupon.discount_value
-                        )
-
-                    elif (
-                        coupon.coupon_type.value ==
-                        "percentage"
-                    ):
-
-                        discount = (
-                            subtotal *
-                            coupon.discount_value
-                        ) / Decimal("100")
-
-            total_amount = (
-                subtotal +
-                shipping_charge -
-                discount
-            )
-
-            order = Order(
-                order_number=
-                f"SW-{uuid.uuid4().hex[:10].upper()}",
-                user_id=user_id,
-                address_id=payload.address_id,
-                coupon_id=(
-                    coupon.id
-                    if coupon
-                    else None
-                ),
-                coupon_code=(
-                    coupon.code
-                    if coupon
-                    else None
-                ),
-                subtotal=subtotal,
-                gst_amount=Decimal("0"),
-                shipping_charge=shipping_charge,
-                discount=discount,
-                total_amount=total_amount,
-                status=OrderStatus.PENDING,
-                payment_status=
-                PaymentStatus.PENDING
-            )
-
-            await (
-                OrderRepository.create_order(
-                    db,
-                    order
-                )
-            )
-
-            for item in cart_items:
-
-                order_item = OrderItem(
-                    order_id=order.id,
-                    product_id=item.product.id,
-                    product_name=item.product.name,
-                    product_sku=item.product.sku,
-                    quantity=item.quantity,
-                    price=item.product.sale_price,
-                    gst_amount=Decimal("0"),
-                    total=(
-                        item.product.sale_price *
-                        item.quantity
-                    )
-                )
-
-                await (
-                    OrderRepository.create_order_item(
-                        db,
-                        order_item
-                    )
-                )
-
-            payment = Payment(
+        for item in cart_items:
+            order_item = OrderItem(
                 order_id=order.id,
-                payment_method=
-                payload.payment_method,
-                amount=total_amount,
-                status=
-                PaymentStatus.PENDING
+                product_id=item.product.id,
+                product_name=item.product.name,
+                product_sku=item.product.sku,
+                quantity=item.quantity,
+                price=item.product.sale_price,
+                gst_amount=Decimal("0"),
+                total=item.product.sale_price * item.quantity
             )
+            await OrderRepository.create_order_item(db, order_item)
 
-            db.add(payment)
+        payment = Payment(
+            order_id=order.id,
+            payment_method=payload.payment_method,
+            amount=total_amount,
+            status=PaymentStatus.PENDING
+        )
 
-            await db.commit()
+        db.add(payment)
+        await db.commit()
 
+        return {
+            "success": True,
+            "status_code": 201,
+            "message": "Order created. Complete payment.",
+            "data": {
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "amount": float(total_amount)
+            }
+        }
+
+    @staticmethod
+    async def payment_success(db, user_id, payload):
+        order = await OrderRepository.get_order_by_id(db, payload.order_id)
+
+        if not order:
             return {
-                "success": True,
-                "status_code": 201,
-                "message":
-                "Order created. Complete payment.",
-                "data": {
-                    "order_id":
-                    str(order.id),
-                    "order_number":
-                    order.order_number,
-                    "amount":
-                    float(total_amount)
-                }
+                "success": False,
+                "status_code": 404,
+                "message": "Order not found"
             }
 
-        @staticmethod
-        async def payment_success(
-            db,
-            user_id,
-            payload
-        ):
+        if order.payment_status == PaymentStatus.PAID:
+            return {
+                "success": False,
+                "status_code": 400,
+                "message": "Payment already completed"
+            }
 
-            order = await (
-                OrderRepository.get_order_by_id(
-                    db,
-                    payload.order_id
-                )
-            )
-
-            if not order:
-
-                return {
-                    "success": False,
-                    "status_code": 404,
-                    "message": "Order not found"
-                }
-
-            if order.payment_status == PaymentStatus.PAID:
-
+        # Validate stock BEFORE mutating state
+        for item in order.items:
+            product = item.product
+            if not product or product.stock_qty < item.quantity:
+                await db.rollback()
                 return {
                     "success": False,
                     "status_code": 400,
-                    "message": "Payment already completed"
+                    "message": f"Stock unavailable for item '{item.product_name}'"
                 }
 
+        # Apply state changes after verification succeeds
+        if order.payments:
             payment = order.payments[0]
+            payment.status = PaymentStatus.PAID
+            payment.gateway_transaction_id = payload.transaction_id
 
-            payment.status = (
-                PaymentStatus.PAID
+        order.payment_status = PaymentStatus.PAID
+        order.status = OrderStatus.CONFIRMED
+
+        # Reduce stock
+        for item in order.items:
+            item.product.stock_qty -= item.quantity
+
+        # Record Coupon usage
+        if order.coupon_id:
+            coupon_usage = CouponUsage(
+                coupon_id=order.coupon_id,
+                user_id=user_id,
+                order_id=order.id,
+                discount_amount=order.discount
             )
+            db.add(coupon_usage)
+            if order.coupon:
+                order.coupon.used_count += 1
 
-            payment.gateway_transaction_id = (
-                payload.transaction_id
-            )
+        # Clear cart items for the user
+        cart_items = await CartRepository.get_all_cart_items(db, user_id)
+        for item in cart_items:
+            await db.delete(item)
 
-            order.payment_status = (
-                PaymentStatus.PAID
-            )
+        await db.commit()
 
-            order.status = (
-                OrderStatus.CONFIRMED
-            )
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Payment successful. Order confirmed."
+        }
 
-            # Reduce stock
-            for item in order.items:
+    @staticmethod
+    async def get_orders(db, user_id):
+        orders = await OrderRepository.get_orders_by_user(db, user_id)
 
-                product = item.product
+        response_data = []
+        for order in orders:
+            # Extract latest Blue Dart shipment details if available
+            latest_shipment = order.shipments[0] if getattr(order, "shipments", None) else None
 
-                if product.stock_qty < item.quantity:
+            response_data.append({
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "status": order.status.value,
+                "payment_status": order.payment_status.value,
+                "total_amount": float(order.total_amount),
+                "order_date": order.created_at,
 
-                    return {
-                        "success": False,
-                        "status_code": 400,
-                        "message": (
-                            f"{product.name} stock unavailable"
-                        )
+                # --- Blue Dart Tracking Status Integration ---
+                "tracking_number": latest_shipment.tracking_number if latest_shipment else None,
+                "delivery_status": latest_shipment.status if latest_shipment else "Pending Dispatch",
+
+                "products": [
+                    {
+                        "product_id": str(item.product_id),
+                        "product_name": item.product_name,
+                        "product_image": item.product.thumbnail_url if item.product else None
                     }
+                    for item in order.items
+                ]
+            })
 
-                product.stock_qty -= item.quantity
+        return {
+            "success": True,
+            "status_code": 200,
+            "data": response_data
+        }
 
-            # Coupon usage
-            if order.coupon_id:
+    @staticmethod
+    async def get_order(db, user_id, order_id):
+        order = await OrderRepository.get_order_details(db, order_id, user_id)
 
-                coupon_usage = CouponUsage(
-                    coupon_id=order.coupon_id,
-                    user_id=user_id,
-                    order_id=order.id,
-                    discount_amount=order.discount
-                )
-
-                db.add(coupon_usage)
-
-                if order.coupon:
-                    order.coupon.used_count += 1
-
-            # Clear cart
-            cart_items = await (
-                CartRepository.get_all_cart_items(
-                    db,
-                    user_id
-                )
-            )
-
-            for item in cart_items:
-
-                await db.delete(item)
-
-            await db.commit()
-
+        if not order:
             return {
-                "success": True,
-                "status_code": 200,
-                "message":
-                "Payment successful. Order confirmed."
+                "success": False,
+                "status_code": 404,
+                "message": "Order not found"
             }
-        @staticmethod
-        async def get_orders(
-            db,
-            user_id
-        ):
 
-            orders = await (
-                OrderRepository.get_orders_by_user(
-                    db,
-                    user_id
-                )
-            )
+        # Extract Blue Dart shipment record if waybill has been generated
+        shipments_list = []
+        for shipment in getattr(order, "shipments", []):
+            shipments_list.append({
+                "shipment_id": str(shipment.id),
+                "courier_name": shipment.courier_name,
+                "tracking_number": shipment.tracking_number,
+                "pickup_token_number": shipment.pickup_token_number,
+                "status": shipment.status,
+                "last_scanned_location": shipment.last_scanned_location,
+                "last_scanned_at": shipment.last_scanned_at.isoformat() if shipment.last_scanned_at else None,
+                "estimated_delivery": shipment.estimated_delivery.isoformat() if shipment.estimated_delivery else None,
+                "awb_pdf_url": shipment.awb_pdf_url
+            })
 
-            return {
-                "success": True,
-                "status_code": 200,
-                "data": [
-    {
-        "order_id": str(order.id),
+        return {
+            "success": True,
+            "status_code": 200,
+            "data": {
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "order_date": order.created_at,
+                "status": order.status.value,
+                "payment_status": order.payment_status.value,
+                "subtotal": float(order.subtotal),
+                "shipping_charge": float(order.shipping_charge),
+                "discount": float(order.discount),
+                "total_amount": float(order.total_amount),
 
-        "order_number": order.order_number,
+                # --- Detailed Blue Dart Tracking ---
+                "shipments": shipments_list,
 
-        "status": order.status.value,
-
-        "payment_status": order.payment_status.value,
-
-        "total_amount": float(
-            order.total_amount
-        ),
-
-        "products": [
-                            {
-                                "product_id": str(
-                                    item.product_id
-                                ),
-
-                                "product_name":
-                                    item.product_name,
-
-                                "product_image":
-                                    item.product.thumbnail_url
-                                    if item.product
-                                    else None
-                            }
-                            for item in order.items
-                        ]
+                "items": [
+                    {
+                        "product_id": str(item.product_id),
+                        "product_name": item.product_name,
+                        "product_sku": item.product_sku,
+                        "product_image": item.product.thumbnail_url if item.product else None,
+                        "quantity": item.quantity,
+                        "price": float(item.price),
+                        "total": float(item.total)
                     }
-                    for order in orders
+                    for item in order.items
                 ]
             }
+        }
 
-        @staticmethod
-        async def get_order(
-            db,
-            user_id,
-            order_id
-        ):
+    @staticmethod
+    async def cancel_order(db, user_id, order_id, reason):
+        order = await OrderRepository.get_order_details(db, order_id, user_id)
 
-            order = await (
-                OrderRepository.get_order_details(
-                    db,
-                    order_id,
-                    user_id
-                )
-            )
-
-            if not order:
-
-                return {
-                    "success": False,
-                    "status_code": 404,
-                    "message":
-                    "Order not found"
-                }
-
+        if not order:
             return {
-                "success": True,
-                "status_code": 200,
-                "data": {
-                    "order_id":
-                    str(order.id),
-
-                    "order_number":
-                    order.order_number,
-
-                    "status":
-                    order.status.value,
-
-                    "payment_status":
-                    order.payment_status.value,
-
-                    "subtotal":
-                    float(order.subtotal),
-
-                    "shipping_charge":
-                    float(
-                        order.shipping_charge
-                    ),
-
-                    "discount":
-                    float(order.discount),
-
-                    "total_amount":
-                    float(
-                        order.total_amount
-                    ),
-
-                    "items": [
-                                {
-                                    "product_id": str(
-                                        item.product_id
-                                    ),
-
-                                    "product_name":
-                                        item.product_name,
-
-                                    "product_sku":
-                                        item.product_sku,
-
-                                    "product_image":
-                                        item.product.thumbnail_url
-                                        if item.product
-                                        else None,
-
-                                    "quantity":
-                                        item.quantity,
-
-                                    "price":
-                                        float(item.price),
-
-                                    "total":
-                                        float(item.total)
-                                }
-                                for item in order.items
-                            ]
-                }
+                "success": False,
+                "status_code": 404,
+                "message": "Order not found"
             }
 
-        @staticmethod
-        async def cancel_order(
-            db,
-            user_id,
-            order_id,
-            reason
-        ):
-
-            order = await (
-                OrderRepository.get_order_details(
-                    db,
-                    order_id,
-                    user_id
-                )
-            )
-
-            if not order:
-
-                return {
-                    "success": False,
-                    "status_code": 404,
-                    "message":
-                    "Order not found"
-                }
-
-            if order.status in [
-                OrderStatus.SHIPPED,
-                OrderStatus.OUT_FOR_DELIVERY,
-                OrderStatus.DELIVERED
-            ]:
-
-                return {
-                    "success": False,
-                    "status_code": 400,
-                    "message":
-                    "Order cannot be cancelled"
-                }
-
-            order.status = (
-                OrderStatus.CANCELLED
-            )
-
-            order.cancel_reason = reason
-
-            await db.commit()
-
+        if order.status in [
+            OrderStatus.SHIPPED,
+            OrderStatus.OUT_FOR_DELIVERY,
+            OrderStatus.DELIVERED
+        ]:
             return {
-                "success": True,
-                "status_code": 200,
-                "message":
-                "Order cancelled successfully"
-            }   
-        
-
-
-
-        @staticmethod
-        async def create_payment_order(
-            db,
-            user_id,
-            payload
-        ):
-            cart_items = await CartRepository.get_all_cart_items(
-                db,
-                user_id
-            )
-
-            if not cart_items:
-                return {
-                    "success": False,
-                    "message": "Cart is empty"
-                }
-
-            subtotal = Decimal("0")
-
-            for item in cart_items:
-                subtotal += (
-                    item.product.sale_price *
-                    item.quantity
-                )
-
-            shipping_charge = Decimal("0")
-
-            settings = await SettingRepository.get_settings(
-                db
-            )
-
-            if (
-                settings and
-                subtotal < settings.free_shipping_threshold
-            ):
-                shipping_charge = settings.delivery_charge
-
-            discount = Decimal("0")
-            coupon = None
-
-            if payload.coupon_code:
-
-                coupon = await CouponRepository.get_by_code(
-                    db,
-                    payload.coupon_code
-                )
-
-                if coupon:
-
-                    if coupon.coupon_type.value == "flat":
-
-                        discount = coupon.discount_value
-
-                    elif coupon.coupon_type.value == "percentage":
-
-                        discount = (
-                            subtotal *
-                            coupon.discount_value
-                        ) / Decimal("100")
-
-            total_amount = (
-                subtotal +
-                shipping_charge -
-                discount
-            )
-
-            return {
-                "success": True,
-                "amount": float(total_amount),
-                "coupon_code": payload.coupon_code,
-                "address_id": str(payload.address_id)
+                "success": False,
+                "status_code": 400,
+                "message": "Order cannot be cancelled after dispatch"
             }
-        
 
+        # Restock products if order was confirmed
+        if order.status == OrderStatus.CONFIRMED:
+            for item in order.items:
+                if item.product:
+                    item.product.stock_qty += item.quantity
 
-        
+        order.status = OrderStatus.CANCELLED
+        order.cancel_reason = reason
 
-        @staticmethod
-        async def clear_cart(
-            db,
-            user_id
-        ):
-            items = await CartRepository.get_all_cart_items(
-                db,
-                user_id
-            )
+        await db.commit()
 
-            for item in items:
-                await db.delete(item)
+        return {
+            "success": True,
+            "status_code": 200,
+            "message": "Order cancelled successfully"
+        }
 
-            await db.flush()
+    @staticmethod
+    async def create_payment_order(db, user_id, payload):
+        cart_items = await CartRepository.get_all_cart_items(db, user_id)
+
+        if not cart_items:
+            return {
+                "success": False,
+                "message": "Cart is empty"
+            }
+
+        subtotal = Decimal("0")
+        for item in cart_items:
+            subtotal += item.product.sale_price * item.quantity
+
+        shipping_charge = Decimal("0")
+        settings = await SettingRepository.get_settings(db)
+
+        if settings and subtotal < settings.free_shipping_threshold:
+            shipping_charge = settings.delivery_charge
+
+        discount = Decimal("0")
+        if payload.coupon_code:
+            coupon = await CouponRepository.get_coupon_by_code(db, payload.coupon_code)
+            if coupon:
+                if coupon.coupon_type.value == "flat":
+                    discount = coupon.discount_value
+                elif coupon.coupon_type.value == "percentage":
+                    discount = (subtotal * coupon.discount_value) / Decimal("100")
+
+        total_amount = max(Decimal("0"), subtotal + shipping_charge - discount)
+
+        return {
+            "success": True,
+            "amount": float(total_amount),
+            "coupon_code": payload.coupon_code,
+            "address_id": str(payload.address_id)
+        }
+
+    @staticmethod
+    async def clear_cart(db, user_id):
+        items = await CartRepository.get_all_cart_items(db, user_id)
+        for item in items:
+            await db.delete(item)
+        await db.commit()

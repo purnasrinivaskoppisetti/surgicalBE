@@ -1,6 +1,5 @@
-from app.repositories.order_repository import (
-    OrderRepository
-)
+from app.repositories.order_repository import OrderRepository
+from app.core.config import settings
 
 
 class OrderService:
@@ -14,7 +13,6 @@ class OrderService:
         status=None,
         payment_status=None
     ):
-
         orders, total = await OrderRepository.get_orders(
             db=db,
             page=page,
@@ -30,15 +28,11 @@ class OrderService:
             "orders": [
                 {
                     "id": str(order.id),
-
                     "order_number": order.order_number,
-
                     "products": [
                         {
                             "product_id": str(item.product_id),
-
                             "product_name": item.product_name,
-
                             "product_image": (
                                 item.product.thumbnail_url
                                 if item.product
@@ -47,38 +41,30 @@ class OrderService:
                         }
                         for item in order.items
                     ],
-
                     "customer_name": (
                         order.user.full_name
                         if order.user else None
                     ),
-
                     "customer_phone": (
                         order.user.phone
                         if order.user else None
                     ),
-
                     "items_count": len(order.items),
-
                     "amount": float(order.total_amount),
-
                     "payment_status": (
                         order.payment_status.value
                         if order.payment_status
                         else None
                     ),
-
                     "status": (
                         order.status.value
                         if order.status
                         else None
                     ),
-
                     "order_date": order.created_at
                 }
                 for order in orders
             ],
-
             "summary": {
                 "total_orders": summary["total_orders"],
                 "revenue": float(summary["revenue"]),
@@ -87,7 +73,6 @@ class OrderService:
                 "delivered": summary["delivered"] or 0,
                 "cancelled": summary["cancelled"] or 0
             },
-
             "pagination": {
                 "page": page,
                 "page_size": page_size,
@@ -100,7 +85,6 @@ class OrderService:
         db,
         order_id
     ):
-
         order = await OrderRepository.get_order_by_id(
             db,
             order_id
@@ -109,178 +93,167 @@ class OrderService:
         if not order:
             return None
 
+        # Calculate package weight across items
+        total_weight = sum(
+            (float(item.product.weight) if item.product and item.product.weight else 0.5) * item.quantity
+            for item in order.items
+        )
+
         return {
-
             "id": str(order.id),
-
             "order_number": order.order_number,
-
             "order_date": order.created_at,
-
             "status": (
                 order.status.value
                 if order.status
                 else None
             ),
-
             "payment_status": (
                 order.payment_status.value
                 if order.payment_status
                 else None
             ),
-
             "customer": {
-
                 "user_id": (
                     str(order.user.id)
                     if order.user else None
                 ),
-
                 "name": (
                     order.user.full_name
                     if order.user else None
                 ),
-
                 "phone": (
                     order.user.phone
                     if order.user else None
                 ),
-
                 "email": (
                     order.user.email
                     if order.user else None
                 )
             },
-
             "shipping_address": {
-
                 "address_id": (
                     str(order.address.id)
                     if order.address else None
                 ),
-
                 "full_name": (
                     order.address.full_name
                     if order.address else None
                 ),
-
                 "phone": (
                     order.address.phone
                     if order.address else None
                 ),
-
+                "email": (
+                    order.address.email or (order.user.email if order.user else None)
+                ),
                 "address_line1": (
                     order.address.address_line1
                     if order.address else None
                 ),
-
                 "address_line2": (
                     order.address.address_line2
                     if order.address else None
                 ),
-
                 "city": (
                     order.address.city
                     if order.address else None
                 ),
-
                 "state": (
                     order.address.state
                     if order.address else None
                 ),
-
                 "pincode": (
                     order.address.pincode
                     if order.address else None
                 ),
-
                 "country": (
                     order.address.country
                     if order.address else None
                 )
             },
-
+            "package_summary": {
+                "total_weight_kg": max(0.5, total_weight),
+                "total_items_count": sum(item.quantity for item in order.items),
+                "is_cod": (
+                    order.payments[0].payment_method.value == "cod"
+                    if order.payments and order.payments[0].payment_method
+                    else False
+                )
+            },
             "items": [
-
                 {
                     "order_item_id": str(item.id),
-
                     "product_id": str(item.product_id),
-
                     "product_name": item.product_name,
-
                     "product_sku": item.product_sku,
-
                     "product_image": (
                         item.product.thumbnail_url
                         if item.product
                         else None
                     ),
-
+                    "weight": float(item.product.weight) if item.product and item.product.weight else 0.5,
+                    "length": float(item.product.length) if item.product and item.product.length else 10.0,
+                    "breadth": float(item.product.breadth) if item.product and item.product.breadth else 10.0,
+                    "height": float(item.product.height) if item.product and item.product.height else 10.0,
                     "quantity": item.quantity,
-
                     "price": float(item.price),
-
                     "gst_amount": float(item.gst_amount),
-
                     "total": float(item.total)
                 }
-
                 for item in order.items
             ],
-
             "pricing": {
-
                 "subtotal": float(order.subtotal),
-
                 "gst": float(order.gst_amount),
-
                 "shipping": float(order.shipping_charge),
-
                 "discount": float(order.discount),
-
                 "grand_total": float(order.total_amount)
             },
-
             "payment": [
-
                 {
                     "payment_id": str(payment.id),
-
                     "amount": float(payment.amount),
-
                     "method": (
                         payment.payment_method.value
                         if payment.payment_method
                         else None
                     ),
-
-                    "transaction_id":
-                        payment.gateway_transaction_id,
-
+                    "transaction_id": payment.gateway_transaction_id,
                     "status": (
                         payment.status.value
                         if payment.status
                         else None
                     ),
-
                     "paid_at": payment.paid_at
                 }
-
                 for payment in order.payments
             ],
-
+            # --- Blue Dart Shipment & Tracking Details ---
+            "shipments": [
+                {
+                    "shipment_id": str(shipment.id),
+                    "courier_name": shipment.courier_name,
+                    "tracking_number": shipment.tracking_number,
+                    "pickup_token_number": shipment.pickup_token_number,
+                    "status": shipment.status,
+                    "last_scanned_location": shipment.last_scanned_location,
+                    "last_scanned_at": shipment.last_scanned_at,
+                    "awb_pdf_url": shipment.awb_pdf_url,
+                    "estimated_delivery": shipment.estimated_delivery
+                }
+                for shipment in getattr(order, "shipments", [])
+            ],
             "cancel_reason": order.cancel_reason,
-
             "delivered_at": order.delivered_at
         }
+
     @staticmethod
     async def update_status(
         db,
         order_id,
         status
     ):
-
         return await OrderRepository.update_order_status(
             db,
             order_id,
@@ -293,7 +266,6 @@ class OrderService:
         order_id,
         payment_status
     ):
-
         return await OrderRepository.update_payment_status(
             db,
             order_id,
@@ -306,7 +278,6 @@ class OrderService:
         order_id,
         reason
     ):
-
         return await OrderRepository.cancel_order(
             db,
             order_id,
