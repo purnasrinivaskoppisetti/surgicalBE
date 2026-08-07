@@ -1,5 +1,4 @@
 from uuid import UUID
-
 from fastapi import (
     APIRouter,
     Depends,
@@ -9,17 +8,14 @@ from fastapi import (
     Query,
     status
 )
-
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_admin
-
 from app.schemas.admin.product_schema import (
     ProductCreate,
     ProductUpdate
 )
-
 from app.services.admin.product_service import (
     ProductService
 )
@@ -48,6 +44,13 @@ async def create_product(
     mrp: float = Form(...),
     sale_price: float = Form(...),
     stock_qty: int = Form(0),
+    
+    # --- Shipping & Package Dimensions ---
+    weight: float = Form(0.5, description="Weight in kg"),
+    length: float = Form(10.0, description="Length in cm"),
+    breadth: float = Form(10.0, description="Breadth in cm"),
+    height: float = Form(10.0, description="Height in cm"),
+
     manufacturer: str | None = Form(None),
     hsn_code: str | None = Form(None),
     is_featured: bool = Form(False),
@@ -68,6 +71,10 @@ async def create_product(
         mrp=mrp,
         sale_price=sale_price,
         stock_qty=stock_qty,
+        weight=weight,
+        length=length,
+        breadth=breadth,
+        height=height,
         manufacturer=manufacturer,
         hsn_code=hsn_code,
         is_featured=is_featured,
@@ -88,21 +95,10 @@ async def create_product(
 
 @router.get("")
 async def get_products(
-    page: int = Query(
-        1,
-        ge=1
-    ),
-    page_size: int = Query(
-        20,
-        ge=1,
-        le=100
-    ),
-    search: str | None = Query(
-        None
-    ),
-    category_id: UUID | None = Query(
-        None
-    ),
+    page: int = Query(1, ge=1),
+    page_size: int = Query(20, ge=1, le=100),
+    search: str | None = Query(None),
+    category_id: UUID | None = Query(None),
     db: AsyncSession = Depends(get_db),
     admin=Depends(get_current_admin)
 ):
@@ -149,6 +145,13 @@ async def update_product(
     mrp: float | None = Form(None),
     sale_price: float | None = Form(None),
     stock_qty: int | None = Form(None),
+
+    # --- Shipping & Package Dimensions ---
+    weight: float | None = Form(None),
+    length: float | None = Form(None),
+    breadth: float | None = Form(None),
+    height: float | None = Form(None),
+
     manufacturer: str | None = Form(None),
     hsn_code: str | None = Form(None),
     is_featured: bool | None = Form(None),
@@ -169,6 +172,10 @@ async def update_product(
         mrp=mrp,
         sale_price=sale_price,
         stock_qty=stock_qty,
+        weight=weight,
+        length=length,
+        breadth=breadth,
+        height=height,
         manufacturer=manufacturer,
         hsn_code=hsn_code,
         is_featured=is_featured,
