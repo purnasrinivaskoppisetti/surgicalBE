@@ -1,5 +1,6 @@
 import uuid
 from decimal import Decimal
+import logging
 
 from app.models.models import (
     Order,
@@ -7,12 +8,16 @@ from app.models.models import (
     CouponUsage,
     Payment,
     OrderStatus,
-    PaymentStatus
+    PaymentStatus,
+    Shipment
 )
 from app.repositories.cart_repository import CartRepository
 from app.repositories.order_repository import OrderRepository
 from app.repositories.coupon_repository import CouponRepository
 from app.repositories.setting_repository import SettingRepository
+from app.services.bluedart_service import BlueDartService
+
+logger = logging.getLogger(__name__)
 
 
 class OrderService:
@@ -171,11 +176,49 @@ class OrderService:
             await db.delete(item)
 
         await db.commit()
+        await db.refresh(order)
+
+        # =========================================================================
+        # 🚚 AUTOMATIC BLUE DART WAYBILL GENERATION (POST-PAYMENT)
+        # =========================================================================
+        waybill_info = None
+        try:
+            if order.address:
+                waybill_res = await BlueDartService.generate_waybill(order, order.address)[cite: 1, 2]
+                
+                # Save generated shipment record in database
+                shipment = Shipment(
+                    id=uuid.uuid4(),
+                    order_id=order.id,
+                    courier_name="Blue Dart",
+                    tracking_number=waybill_res.get("awb_number"),
+                    pickup_token_number=waybill_res.get("pickup_token_number"),
+                    origin_area=waybill_res.get("origin_area"),
+                    destination_area=waybill_res.get("destination_area"),
+                    destination_location=waybill_res.get("destination_location"),
+                    status="MANIFESTED"
+                )
+                db.add(shipment)
+                order.status = OrderStatus.PACKED
+                await db.commit()
+                
+                waybill_info = {
+                    "awb_number": waybill_res.get("awb_number"),
+                    "pickup_token_number": waybill_res.get("pickup_token_number")
+                }
+        except Exception as e:
+            # Log waybill failure so payment remains marked SUCCESS while admin can retry manually
+            logger.error(f"Auto-Waybill Generation Failed for Order {order.order_number}: {str(e)}")
 
         return {
             "success": True,
             "status_code": 200,
-            "message": "Payment successful. Order confirmed."
+            "message": "Payment successful. Order confirmed and waybill dispatched.",
+            "data": {
+                "order_id": str(order.id),
+                "order_number": order.order_number,
+                "waybill": waybill_info
+            }
         }
 
     @staticmethod
