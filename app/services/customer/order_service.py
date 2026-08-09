@@ -179,7 +179,7 @@ class OrderService:
         await db.refresh(order)
 
         # =========================================================================
-        # 🚚 AUTOMATIC BLUE DART WAYBILL GENERATION (POST-PAYMENT)
+        # AUTOMATIC BLUE DART WAYBILL GENERATION (POST-PAYMENT)
         # =========================================================================
         waybill_info = None
         try:
