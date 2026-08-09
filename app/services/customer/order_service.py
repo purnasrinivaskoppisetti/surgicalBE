@@ -184,7 +184,10 @@ class OrderService:
         waybill_info = None
         try:
             if order.address:
-                waybill_res = await BlueDartService.generate_waybill(order, order.address)[cite: 1, 2]
+                waybill_res = await BlueDartService.generate_waybill(
+                    order,
+                    order.address
+                )
                 
                 # Save generated shipment record in database
                 shipment = Shipment(
