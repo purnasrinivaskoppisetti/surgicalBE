@@ -80,6 +80,9 @@ class OrderRepository:
             .scalar_one_or_none()
         )
 
+
+
+    
     # ============================================================
     # GET CUSTOMER ORDER
     # ============================================================
@@ -119,6 +122,38 @@ class OrderRepository:
             .unique()
             .scalar_one_or_none()
         )
+
+
+
+    # ============================================================
+        # GET ALL ORDERS FOR CUSTOMER
+        # ============================================================
+    
+    @staticmethod
+    async def get_orders_by_user(db, user_id):
+            result = await db.execute(
+                select(Order)
+                .options(
+                    joinedload(Order.items).joinedload(OrderItem.product),
+                    joinedload(Order.address),
+                    joinedload(Order.payments),
+                    joinedload(Order.shipments),
+                    joinedload(Order.coupon),
+                )
+                .where(
+                    Order.user_id == user_id
+                )
+                .order_by(
+                    Order.created_at.desc()
+                )
+            )
+    
+            return (
+                result
+                .unique()
+                .scalars()
+                .all()
+            )
 
     # ============================================================
     # GET ORDERS FOR ADMIN
