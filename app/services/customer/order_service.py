@@ -225,40 +225,107 @@ class OrderService:
         }
 
     @staticmethod
-    async def get_orders(db, user_id):
-        orders = await OrderRepository.get_orders_by_user(db, user_id)
+    async def get_orders(
+        db,
+        user_id,
+    ):
 
-        response_data = []
+        orders = await OrderRepository.get_orders_by_user(
+            db,
+            user_id,
+        )
+
+        data = []
+
         for order in orders:
-            # Extract latest Blue Dart shipment details if available
-            latest_shipment = order.shipments[0] if getattr(order, "shipments", None) else None
 
-            response_data.append({
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "status": order.status.value,
-                "payment_status": order.payment_status.value,
-                "total_amount": float(order.total_amount),
-                "order_date": order.created_at,
+            latest_shipment = (
+                order.shipments[0]
+                if order.shipments
+                else None
+            )
 
-                # --- Blue Dart Tracking Status Integration ---
-                "tracking_number": latest_shipment.tracking_number if latest_shipment else None,
-                "delivery_status": latest_shipment.status if latest_shipment else "Pending Dispatch",
+            products = []
 
-                "products": [
-                    {
-                        "product_id": str(item.product_id),
-                        "product_name": item.product_name,
-                        "product_image": item.product.thumbnail_url if item.product else None
-                    }
-                    for item in order.items
-                ]
+            for item in order.items:
+
+                products.append({
+                    "product_id": str(
+                        item.product_id
+                    ),
+
+                    "product_name":
+                        item.product_name,
+
+                    "quantity":
+                        item.quantity,
+
+                    "price":
+                        float(item.price or 0),
+
+                    "total":
+                        float(item.total or 0),
+
+                    "product_image": (
+                        item.product.thumbnail_url
+                        if item.product
+                        else None
+                    ),
+                })
+
+            data.append({
+
+                "order_id":
+                    str(order.id),
+
+                "order_number":
+                    order.order_number,
+
+                "status": (
+                    order.status.value
+                    if hasattr(
+                        order.status,
+                        "value",
+                    )
+                    else str(order.status)
+                ),
+
+                "payment_status": (
+                    order.payment_status.value
+                    if hasattr(
+                        order.payment_status,
+                        "value",
+                    )
+                    else str(order.payment_status)
+                ),
+
+                "total_amount":
+                    float(order.total_amount or 0),
+
+                "order_date":
+                    order.created_at,
+
+                "tracking_number": (
+                    latest_shipment.tracking_number
+                    if latest_shipment
+                    else None
+                ),
+
+                "delivery_status": (
+                    latest_shipment.status
+                    if latest_shipment
+                    else None
+                ),
+
+                "products":
+                    products,
             })
 
         return {
             "success": True,
             "status_code": 200,
-            "data": response_data
+            "message": "Orders fetched successfully",
+            "data": data,
         }
 
     @staticmethod

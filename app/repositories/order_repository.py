@@ -1,5 +1,3 @@
-# app/repositories/order_repository.py
-
 from sqlalchemy import select, func, case, or_
 from sqlalchemy.orm import joinedload
 
@@ -8,6 +6,7 @@ from app.models.models import (
     StoreSetting,
     Order,
     OrderItem,
+    Product,
     User,
     OrderStatus,
     PaymentStatus,
@@ -16,58 +15,138 @@ from app.models.models import (
 
 class OrderRepository:
 
+    # ============================================================
+    # GET COUPON BY CODE
+    # ============================================================
+
     @staticmethod
-    async def get_coupon_by_code(db, code: str):
+    async def get_coupon_by_code(
+        db,
+        code: str,
+    ):
         result = await db.execute(
             select(Coupon).where(
                 Coupon.code == code,
-                Coupon.is_active == True
+                Coupon.is_active == True,
             )
         )
+
         return result.scalar_one_or_none()
+
+    # ============================================================
+    # GET STORE SETTINGS
+    # ============================================================
 
     @staticmethod
     async def get_store_settings(db):
+
         result = await db.execute(
             select(StoreSetting)
         )
+
         return result.scalar_one_or_none()
 
-    @staticmethod
-    async def create_order(db, order: Order):
-        db.add(order)
-        await db.flush()
-        return order
+    # ============================================================
+    # CREATE ORDER
+    # ============================================================
 
     @staticmethod
-    async def create_order_item(db, order_item: OrderItem):
-        db.add(order_item)
+    async def create_order(
+        db,
+        order: Order,
+    ):
+        db.add(order)
+
         await db.flush()
+
+        return order
+
+    # ============================================================
+    # CREATE ORDER ITEM
+    # ============================================================
+
+    @staticmethod
+    async def create_order_item(
+        db,
+        order_item: OrderItem,
+    ):
+        db.add(order_item)
+
+        await db.flush()
+
         return order_item
 
     # ============================================================
-    # GET SINGLE ORDER - ADMIN
+    # GET SINGLE ORDER
+    #
+    # IMPORTANT:
+    # ALL relationships required by:
+    #
+    # - BillingService
+    # - BlueDartService
+    # - Admin order APIs
+    #
+    # are eagerly loaded.
     # ============================================================
 
     @staticmethod
-    async def get_order_by_id(db, order_id):
+    async def get_order_by_id(
+        db,
+        order_id,
+    ):
 
         result = await db.execute(
             select(Order)
             .options(
-                joinedload(Order.user),
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.user
+                ),
+
+                # ------------------------------------------------
+                # ORDER ITEMS
+                # PRODUCT
+                # CATEGORY
+                # ------------------------------------------------
 
                 joinedload(
                     Order.items
-                ).joinedload(
+                )
+                .joinedload(
                     OrderItem.product
+                )
+                .joinedload(
+                    Product.category
                 ),
 
-                joinedload(Order.address),
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
 
-                joinedload(Order.payments),
+                joinedload(
+                    Order.address
+                ),
 
-                joinedload(Order.shipments),
+                # ------------------------------------------------
+                # PAYMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.payments
+                ),
+
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.shipments
+                ),
+
             )
             .where(
                 Order.id == order_id
@@ -80,9 +159,6 @@ class OrderRepository:
             .scalar_one_or_none()
         )
 
-
-
-    
     # ============================================================
     # GET CUSTOMER ORDER
     # ============================================================
@@ -97,19 +173,33 @@ class OrderRepository:
         result = await db.execute(
             select(Order)
             .options(
-                joinedload(Order.user),
+
+                joinedload(
+                    Order.user
+                ),
 
                 joinedload(
                     Order.items
-                ).joinedload(
+                )
+                .joinedload(
                     OrderItem.product
+                )
+                .joinedload(
+                    Product.category
                 ),
 
-                joinedload(Order.address),
+                joinedload(
+                    Order.address
+                ),
 
-                joinedload(Order.payments),
+                joinedload(
+                    Order.payments
+                ),
 
-                joinedload(Order.shipments),
+                joinedload(
+                    Order.shipments
+                ),
+
             )
             .where(
                 Order.id == order_id,
@@ -123,23 +213,50 @@ class OrderRepository:
             .scalar_one_or_none()
         )
 
-
-
     # ============================================================
-        # GET ALL ORDERS FOR CUSTOMER
-        # ============================================================
-    
+    # GET ALL ORDERS FOR CUSTOMER
+    # ============================================================
+
     @staticmethod
-    async def get_orders_by_user(db, user_id):
+    async def get_orders_by_user(
+        db,
+        user_id,
+    ):
 
         result = await db.execute(
             select(Order)
             .options(
-                joinedload(Order.items).joinedload(OrderItem.product),
-                joinedload(Order.address),
-                joinedload(Order.payments),
-                joinedload(Order.shipments),
-                joinedload(Order.coupon),
+
+                joinedload(
+                    Order.user
+                ),
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                )
+                .joinedload(
+                    Product.category
+                ),
+
+                joinedload(
+                    Order.address
+                ),
+
+                joinedload(
+                    Order.payments
+                ),
+
+                joinedload(
+                    Order.shipments
+                ),
+
+                joinedload(
+                    Order.coupon
+                ),
+
             )
             .where(
                 Order.user_id == user_id
@@ -159,7 +276,6 @@ class OrderRepository:
     # ============================================================
     # GET ORDERS FOR ADMIN
     #
-    # IMPORTANT:
     # DEFAULT = ONLY PAID ORDERS
     # ============================================================
 
@@ -176,25 +292,32 @@ class OrderRepository:
         conditions = []
 
         # --------------------------------------------------------
-        # ONLY PAID ORDERS BY DEFAULT
+        # PAYMENT STATUS
         # --------------------------------------------------------
 
         if payment_status:
+
             conditions.append(
-                Order.payment_status == payment_status
+                Order.payment_status ==
+                payment_status
             )
+
         else:
+
             conditions.append(
-                Order.payment_status == PaymentStatus.PAID
+                Order.payment_status ==
+                PaymentStatus.PAID
             )
 
         # --------------------------------------------------------
-        # ORDER STATUS FILTER
+        # ORDER STATUS
         # --------------------------------------------------------
 
         if status:
+
             conditions.append(
-                Order.status == status
+                Order.status ==
+                status
             )
 
         # --------------------------------------------------------
@@ -228,7 +351,9 @@ class OrderRepository:
                 func.count(Order.id)
             )
             .join(User)
-            .where(*conditions)
+            .where(
+                *conditions
+            )
         )
 
         total = await db.scalar(
@@ -254,8 +379,12 @@ class OrderRepository:
 
                 joinedload(
                     Order.items
-                ).joinedload(
+                )
+                .joinedload(
                     OrderItem.product
+                )
+                .joinedload(
+                    Product.category
                 ),
 
                 joinedload(
@@ -265,15 +394,21 @@ class OrderRepository:
                 joinedload(
                     Order.shipments
                 ),
+
             )
-            .where(*conditions)
+            .where(
+                *conditions
+            )
             .order_by(
                 Order.created_at.desc()
             )
             .offset(
-                (page - 1) * page_size
+                (page - 1) *
+                page_size
             )
-            .limit(page_size)
+            .limit(
+                page_size
+            )
         )
 
         result = await db.execute(
@@ -289,7 +424,7 @@ class OrderRepository:
 
         return (
             orders,
-            total or 0
+            total or 0,
         )
 
     # ============================================================
@@ -307,7 +442,7 @@ class OrderRepository:
             await OrderRepository
             .get_order_by_id(
                 db,
-                order_id
+                order_id,
             )
         )
 
@@ -339,7 +474,7 @@ class OrderRepository:
             await OrderRepository
             .get_order_by_id(
                 db,
-                order_id
+                order_id,
             )
         )
 
@@ -373,7 +508,7 @@ class OrderRepository:
             await OrderRepository
             .get_order_by_id(
                 db,
-                order_id
+                order_id,
             )
         )
 
@@ -384,7 +519,9 @@ class OrderRepository:
             OrderStatus.CANCELLED
         )
 
-        order.cancel_reason = reason
+        order.cancel_reason = (
+            reason
+        )
 
         await db.commit()
 
@@ -400,7 +537,7 @@ class OrderRepository:
 
     @staticmethod
     async def get_order_summary(
-        db
+        db,
     ):
 
         result = await db.execute(
@@ -416,7 +553,7 @@ class OrderRepository:
                     func.sum(
                         Order.total_amount
                     ),
-                    0
+                    0,
                 ).label(
                     "revenue"
                 ),
@@ -427,12 +564,12 @@ class OrderRepository:
                             (
                                 Order.status ==
                                 OrderStatus.PENDING,
-                                1
+                                1,
                             ),
-                            else_=0
+                            else_=0,
                         )
                     ),
-                    0
+                    0,
                 ).label(
                     "pending"
                 ),
@@ -443,14 +580,14 @@ class OrderRepository:
                             (
                                 Order.status.in_([
                                     OrderStatus.SHIPPED,
-                                    OrderStatus.OUT_FOR_DELIVERY
+                                    OrderStatus.OUT_FOR_DELIVERY,
                                 ]),
-                                1
+                                1,
                             ),
-                            else_=0
+                            else_=0,
                         )
                     ),
-                    0
+                    0,
                 ).label(
                     "in_transit"
                 ),
@@ -461,12 +598,12 @@ class OrderRepository:
                             (
                                 Order.status ==
                                 OrderStatus.DELIVERED,
-                                1
+                                1,
                             ),
-                            else_=0
+                            else_=0,
                         )
                     ),
-                    0
+                    0,
                 ).label(
                     "delivered"
                 ),
@@ -477,15 +614,16 @@ class OrderRepository:
                             (
                                 Order.status ==
                                 OrderStatus.CANCELLED,
-                                1
+                                1,
                             ),
-                            else_=0
+                            else_=0,
                         )
                     ),
-                    0
+                    0,
                 ).label(
                     "cancelled"
                 ),
+
             )
             .where(
                 Order.payment_status ==
@@ -499,14 +637,17 @@ class OrderRepository:
             .one()
         )
 
+    # ============================================================
+    # GET ORDERS FOR TRACKING
+    # ============================================================
 
     @staticmethod
-    async def get_orders_for_tracking(db):
+    async def get_orders_for_tracking(
+        db,
+    ):
 
         result = await db.execute(
-
             select(Order)
-
             .options(
 
                 joinedload(
@@ -516,30 +657,19 @@ class OrderRepository:
                 joinedload(
                     Order.user
                 ),
+
             )
-
             .where(
-
-                # ----------------------------------------------
-                # ONLY PAID ORDERS
-                # ----------------------------------------------
 
                 Order.payment_status ==
                 PaymentStatus.PAID,
 
-                # ----------------------------------------------
-                # NOT DELIVERED
-                # ----------------------------------------------
-
                 Order.status !=
                 OrderStatus.DELIVERED,
 
-                # ----------------------------------------------
-                # NOT CANCELLED
-                # ----------------------------------------------
-
                 Order.status !=
                 OrderStatus.CANCELLED,
+
             )
         )
 

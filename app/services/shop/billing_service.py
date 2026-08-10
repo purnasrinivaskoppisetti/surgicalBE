@@ -1,5 +1,3 @@
-# app/services/shop/billing_service.py
-
 from datetime import datetime
 
 from fastapi import HTTPException
@@ -14,6 +12,7 @@ from app.models.models import (
     PaymentStatus,
     OrderStatus,
     StoreSetting,
+    Shipment,
 )
 
 from app.repositories.bill_repository import (
@@ -45,6 +44,10 @@ class BillingService:
         user_id,
         order_id,
     ):
+
+        # --------------------------------------------------------
+        # GET ORDER
+        # --------------------------------------------------------
 
         order = await BillRepository.get_order(
             db,
@@ -108,7 +111,9 @@ class BillingService:
             razorpay_order = client.order.create(
                 {
                     "amount": int(
-                        float(order.total_amount) * 100
+                        float(
+                            order.total_amount
+                        ) * 100
                     ),
 
                     "currency": "INR",
@@ -218,6 +223,17 @@ class BillingService:
             )
 
         # ========================================================
+        # IMPORTANT:
+        # Store the ID before commit / rollback.
+        #
+        # This prevents MissingGreenlet when the ORM object
+        # becomes expired after rollback.
+        # ========================================================
+
+        order_id = order.id
+        order_id_str = str(order_id)
+
+        # ========================================================
         # 3. VERIFY OWNERSHIP
         # ========================================================
 
@@ -289,8 +305,6 @@ class BillingService:
             PaymentStatus.PAID
         )
 
-        # Only move to CONFIRMED if not already further ahead
-
         if order.status not in (
             OrderStatus.PACKED,
             OrderStatus.SHIPPED,
@@ -316,7 +330,7 @@ class BillingService:
             await OrderRepository
             .get_order_by_id(
                 db,
-                order.id,
+                order_id,
             )
         )
 
@@ -328,14 +342,15 @@ class BillingService:
 
                 "status_code": 200,
 
-                "message":
+                "message": (
                     "Payment successful. "
-                    "Waybill generation pending.",
+                    "Waybill generation pending."
+                ),
 
                 "data": {
 
                     "order_id":
-                        str(payload.order_id),
+                        order_id_str,
 
                     "payment_status":
                         "PAID",
@@ -357,14 +372,15 @@ class BillingService:
 
                 "status_code": 200,
 
-                "message":
+                "message": (
                     "Payment successful, "
-                    "but delivery address is missing.",
+                    "but delivery address is missing."
+                ),
 
                 "data": {
 
                     "order_id":
-                        str(order.id),
+                        order_id_str,
 
                     "payment_status":
                         "PAID",
@@ -388,7 +404,7 @@ class BillingService:
             await ShipmentRepository
             .get_by_order_id(
                 db,
-                order.id,
+                order_id,
             )
         )
 
@@ -403,29 +419,29 @@ class BillingService:
 
                 "status_code": 200,
 
-                "message":
+                "message": (
                     "Payment successful. "
-                    "Waybill already exists.",
+                    "Waybill already exists."
+                ),
 
                 "data": {
 
                     "order_id":
-                        str(order.id),
+                        order_id_str,
 
                     "payment_status":
                         "PAID",
 
-                    "order_status":
-                        (
-                            order.status.value
-                            if hasattr(
-                                order.status,
-                                "value",
-                            )
-                            else str(
-                                order.status
-                            )
-                        ),
+                    "order_status": (
+                        order.status.value
+                        if hasattr(
+                            order.status,
+                            "value",
+                        )
+                        else str(
+                            order.status
+                        )
+                    ),
 
                     "waybill_generated":
                         True,
@@ -445,11 +461,10 @@ class BillingService:
         try:
 
             # ----------------------------------------------------
-            # STORE / WAREHOUSE
+            # GET STORE / WAREHOUSE SETTINGS
             # ----------------------------------------------------
 
             store_result = await db.execute(
-
                 select(
                     StoreSetting
                 ).limit(1)
@@ -461,24 +476,21 @@ class BillingService:
             )
 
             # ----------------------------------------------------
-            # BLUE DART WAYBILL API
+            # CALL BLUE DART
             # ----------------------------------------------------
 
             waybill_data = (
                 await BlueDartService
                 .generate_waybill(
-
                     order=order,
-
                     address=order.address,
-
                     store_setting=store_setting,
                 )
             )
 
-            # ----------------------------------------------------
-            # GET AWB
-            # ----------------------------------------------------
+            # ====================================================
+            # 12. GET AWB
+            # ====================================================
 
             awb_number = (
                 waybill_data.get(
@@ -493,55 +505,83 @@ class BillingService:
                 )
 
             # ====================================================
-            # 12. CREATE SHIPMENT
+            # 13. CREATE SHIPMENT OBJECT
+            # ====================================================
+            #
+            # IMPORTANT:
+            #
+            # ShipmentRepository.create_shipment()
+            # expects:
+            #
+            #     db
+            #     shipment: Shipment
+            #
+            # NOT:
+            #
+            #     order_id
+            #     tracking_number
+            #     courier_name
+            #
+            # So we create the Shipment model here.
+            # ====================================================
+
+            shipment = Shipment(
+
+                order_id=order_id,
+
+                tracking_number=(
+                    awb_number
+                ),
+
+                courier_name=(
+                    "Blue Dart"
+                ),
+
+                pickup_token_number=(
+                    waybill_data.get(
+                        "pickup_token_number"
+                    )
+                ),
+
+                cluster_code=(
+                    waybill_data.get(
+                        "cluster_code"
+                    )
+                ),
+
+                destination_area=(
+                    waybill_data.get(
+                        "destination_area"
+                    )
+                ),
+
+                destination_location=(
+                    waybill_data.get(
+                        "destination_location"
+                    )
+                ),
+
+                mps_details=(
+                    waybill_data.get(
+                        "mps_details"
+                    )
+                ),
+            )
+
+            # ====================================================
+            # SAVE SHIPMENT
             # ====================================================
 
             shipment = (
                 await ShipmentRepository
                 .create_shipment(
-
                     db=db,
-
-                    order_id=order.id,
-
-                    tracking_number=awb_number,
-
-                    courier_name="Blue Dart",
-
-                    pickup_token_number=(
-                        waybill_data.get(
-                            "pickup_token_number"
-                        )
-                    ),
-
-                    cluster_code=(
-                        waybill_data.get(
-                            "cluster_code"
-                        )
-                    ),
-
-                    destination_area=(
-                        waybill_data.get(
-                            "destination_area"
-                        )
-                    ),
-
-                    destination_location=(
-                        waybill_data.get(
-                            "destination_location"
-                        )
-                    ),
-
-                    mps_details=(
-                        waybill_data.get(
-                            "mps_details"
-                        )
-                    ),
+                    shipment=shipment,
                 )
             )
 
             # ====================================================
-            # 13. SAVE EXTRA SHIPPING DATA
+            # 14. EXTRA SHIPPING DATA
             # ====================================================
 
             optional_fields = {
@@ -571,9 +611,10 @@ class BillingService:
                     "pack_type",
             }
 
-            for model_field, response_field in (
-                optional_fields.items()
-            ):
+            for (
+                model_field,
+                response_field,
+            ) in optional_fields.items():
 
                 if hasattr(
                     shipment,
@@ -581,18 +622,15 @@ class BillingService:
                 ):
 
                     setattr(
-
                         shipment,
-
                         model_field,
-
                         waybill_data.get(
                             response_field
                         ),
                     )
 
             # ====================================================
-            # 14. ORDER = PACKED
+            # 15. ORDER = PACKED
             # ====================================================
 
             order.status = (
@@ -600,13 +638,13 @@ class BillingService:
             )
 
             # ====================================================
-            # 15. COMMIT EVERYTHING
+            # 16. FINAL COMMIT
             # ====================================================
 
             await db.commit()
 
             # ====================================================
-            # 16. REFRESH
+            # 17. REFRESH
             # ====================================================
 
             await db.refresh(
@@ -618,26 +656,31 @@ class BillingService:
             )
 
             # ====================================================
-            # 17. RETURN
+            # 18. SUCCESS RESPONSE
             # ====================================================
 
             return {
 
-                "success": True,
+                "success":
+                    True,
 
-                "status_code": 200,
+                "status_code":
+                    200,
 
-                "message":
+                "message": (
                     "Payment successful and "
-                    "Blue Dart Waybill generated successfully.",
+                    "Blue Dart Waybill generated successfully."
+                ),
 
                 "data": {
 
                     "order_id":
-                        str(order.id),
+                        order_id_str,
 
                     "payment_id":
-                        str(payment.id),
+                        str(
+                            payment.id
+                        ),
 
                     "razorpay_order_id":
                         payload.razorpay_order_id,
@@ -648,17 +691,16 @@ class BillingService:
                     "payment_status":
                         "PAID",
 
-                    "order_status":
-                        (
-                            order.status.value
-                            if hasattr(
-                                order.status,
-                                "value",
-                            )
-                            else str(
-                                order.status
-                            )
-                        ),
+                    "order_status": (
+                        order.status.value
+                        if hasattr(
+                            order.status,
+                            "value",
+                        )
+                        else str(
+                            order.status
+                        )
+                    ),
 
                     "waybill_generated":
                         True,
@@ -717,36 +759,54 @@ class BillingService:
             }
 
         # ========================================================
-        # BLUE DART FAILURE
+        # BLUE DART / SHIPMENT FAILURE
         # ========================================================
 
         except Exception as exc:
 
             # ----------------------------------------------------
-            # IMPORTANT
+            # IMPORTANT:
             #
-            # Payment has already been committed as PAID.
+            # Payment was already committed above.
             #
-            # Do NOT make payment pending again.
+            # Therefore rollback only affects the current
+            # Blue Dart / shipment transaction.
             # ----------------------------------------------------
 
             await db.rollback()
 
+            # ----------------------------------------------------
+            # IMPORTANT:
+            #
+            # DO NOT access:
+            #
+            #     order.id
+            #     order.status
+            #     order.address
+            #
+            # after rollback.
+            #
+            # Use the plain Python order_id_str.
+            # ----------------------------------------------------
+
             return {
 
-                "success": True,
+                "success":
+                    True,
 
-                "status_code": 200,
+                "status_code":
+                    200,
 
-                "message":
+                "message": (
                     "Payment successful, "
                     "but Blue Dart Waybill generation "
-                    "is pending.",
+                    "is pending."
+                ),
 
                 "data": {
 
                     "order_id":
-                        str(order.id),
+                        order_id_str,
 
                     "payment_status":
                         "PAID",
