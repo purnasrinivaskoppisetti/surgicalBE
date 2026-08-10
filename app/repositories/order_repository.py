@@ -1,4 +1,10 @@
-from sqlalchemy import select, func, case, or_
+from sqlalchemy import (
+    select,
+    func,
+    case,
+    or_,
+)
+
 from sqlalchemy.orm import joinedload
 
 from app.models.models import (
@@ -10,6 +16,7 @@ from app.models.models import (
     User,
     OrderStatus,
     PaymentStatus,
+    OrderStatusHistory,
 )
 
 
@@ -24,6 +31,7 @@ class OrderRepository:
         db,
         code: str,
     ):
+
         result = await db.execute(
             select(Coupon).where(
                 Coupon.code == code,
@@ -38,7 +46,9 @@ class OrderRepository:
     # ============================================================
 
     @staticmethod
-    async def get_store_settings(db):
+    async def get_store_settings(
+        db,
+    ):
 
         result = await db.execute(
             select(StoreSetting)
@@ -55,6 +65,7 @@ class OrderRepository:
         db,
         order: Order,
     ):
+
         db.add(order)
 
         await db.flush()
@@ -70,6 +81,7 @@ class OrderRepository:
         db,
         order_item: OrderItem,
     ):
+
         db.add(order_item)
 
         await db.flush()
@@ -79,14 +91,20 @@ class OrderRepository:
     # ============================================================
     # GET SINGLE ORDER
     #
-    # IMPORTANT:
-    # ALL relationships required by:
+    # Loads everything required by:
     #
-    # - BillingService
-    # - BlueDartService
-    # - Admin order APIs
+    # - Admin order details
+    # - Customer order details
+    # - Billing
+    # - Blue Dart
+    # - Tracking
     #
-    # are eagerly loaded.
+    # NOTE:
+    # Order.status_history is NOT loaded here because the
+    # Order model does not define that relationship.
+    #
+    # Status history is fetched separately using
+    # get_order_status_history().
     # ============================================================
 
     @staticmethod
@@ -96,7 +114,9 @@ class OrderRepository:
     ):
 
         result = await db.execute(
+
             select(Order)
+
             .options(
 
                 # ------------------------------------------------
@@ -148,6 +168,7 @@ class OrderRepository:
                 ),
 
             )
+
             .where(
                 Order.id == order_id
             )
@@ -171,12 +192,22 @@ class OrderRepository:
     ):
 
         result = await db.execute(
+
             select(Order)
+
             .options(
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
 
                 joinedload(
                     Order.user
                 ),
+
+                # ------------------------------------------------
+                # ITEMS
+                # ------------------------------------------------
 
                 joinedload(
                     Order.items
@@ -188,19 +219,32 @@ class OrderRepository:
                     Product.category
                 ),
 
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
+
                 joinedload(
                     Order.address
                 ),
 
+                # ------------------------------------------------
+                # PAYMENTS
+                # ------------------------------------------------
+
                 joinedload(
                     Order.payments
                 ),
+
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
 
                 joinedload(
                     Order.shipments
                 ),
 
             )
+
             .where(
                 Order.id == order_id,
                 Order.user_id == user_id,
@@ -214,7 +258,7 @@ class OrderRepository:
         )
 
     # ============================================================
-    # GET ALL ORDERS FOR CUSTOMER
+    # GET ALL CUSTOMER ORDERS
     # ============================================================
 
     @staticmethod
@@ -224,12 +268,22 @@ class OrderRepository:
     ):
 
         result = await db.execute(
+
             select(Order)
+
             .options(
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
 
                 joinedload(
                     Order.user
                 ),
+
+                # ------------------------------------------------
+                # ITEMS
+                # ------------------------------------------------
 
                 joinedload(
                     Order.items
@@ -241,26 +295,44 @@ class OrderRepository:
                     Product.category
                 ),
 
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
+
                 joinedload(
                     Order.address
                 ),
+
+                # ------------------------------------------------
+                # PAYMENTS
+                # ------------------------------------------------
 
                 joinedload(
                     Order.payments
                 ),
 
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
+
                 joinedload(
                     Order.shipments
                 ),
+
+                # ------------------------------------------------
+                # COUPON
+                # ------------------------------------------------
 
                 joinedload(
                     Order.coupon
                 ),
 
             )
+
             .where(
                 Order.user_id == user_id
             )
+
             .order_by(
                 Order.created_at.desc()
             )
@@ -276,7 +348,17 @@ class OrderRepository:
     # ============================================================
     # GET ORDERS FOR ADMIN
     #
-    # DEFAULT = ONLY PAID ORDERS
+    # DEFAULT:
+    # ONLY PAID ORDERS
+    #
+    # Includes:
+    # - User
+    # - Address
+    # - Products
+    # - Payments
+    # - Shipments
+    #
+    # Status history is fetched separately.
     # ============================================================
 
     @staticmethod
@@ -298,15 +380,15 @@ class OrderRepository:
         if payment_status:
 
             conditions.append(
-                Order.payment_status ==
-                payment_status
+                Order.payment_status
+                == payment_status
             )
 
         else:
 
             conditions.append(
-                Order.payment_status ==
-                PaymentStatus.PAID
+                Order.payment_status
+                == PaymentStatus.PAID
             )
 
         # --------------------------------------------------------
@@ -316,8 +398,8 @@ class OrderRepository:
         if status:
 
             conditions.append(
-                Order.status ==
-                status
+                Order.status
+                == status
             )
 
         # --------------------------------------------------------
@@ -327,7 +409,9 @@ class OrderRepository:
         if search:
 
             conditions.append(
+
                 or_(
+
                     Order.order_number.ilike(
                         f"%{search}%"
                     ),
@@ -339,7 +423,9 @@ class OrderRepository:
                     User.phone.ilike(
                         f"%{search}%"
                     ),
+
                 )
+
             )
 
         # ========================================================
@@ -347,13 +433,21 @@ class OrderRepository:
         # ========================================================
 
         count_query = (
+
             select(
-                func.count(Order.id)
+                func.count(
+                    Order.id
+                )
             )
-            .join(User)
+
+            .join(
+                User
+            )
+
             .where(
                 *conditions
             )
+
         )
 
         total = await db.scalar(
@@ -365,17 +459,34 @@ class OrderRepository:
         # ========================================================
 
         query = (
+
             select(Order)
-            .join(User)
+
+            .join(
+                User
+            )
+
             .options(
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
 
                 joinedload(
                     Order.user
                 ),
 
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
+
                 joinedload(
                     Order.address
                 ),
+
+                # ------------------------------------------------
+                # ITEMS → PRODUCT → CATEGORY
+                # ------------------------------------------------
 
                 joinedload(
                     Order.items
@@ -387,28 +498,41 @@ class OrderRepository:
                     Product.category
                 ),
 
+                # ------------------------------------------------
+                # PAYMENTS
+                # ------------------------------------------------
+
                 joinedload(
                     Order.payments
                 ),
+
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
 
                 joinedload(
                     Order.shipments
                 ),
 
             )
+
             .where(
                 *conditions
             )
+
             .order_by(
                 Order.created_at.desc()
             )
+
             .offset(
-                (page - 1) *
-                page_size
+                (page - 1)
+                * page_size
             )
+
             .limit(
                 page_size
             )
+
         )
 
         result = await db.execute(
@@ -425,6 +549,41 @@ class OrderRepository:
         return (
             orders,
             total or 0,
+        )
+
+    # ============================================================
+    # GET ORDER STATUS HISTORY
+    #
+    # Order.status_history relationship is NOT required.
+    #
+    # This directly queries OrderStatusHistory using order_id.
+    # ============================================================
+
+    @staticmethod
+    async def get_order_status_history(
+        db,
+        order_id,
+    ):
+
+        result = await db.execute(
+
+            select(
+                OrderStatusHistory
+            )
+
+            .where(
+                OrderStatusHistory.order_id
+                == order_id
+            )
+
+            .order_by(
+                OrderStatusHistory.created_at.desc()
+            )
+
+        )
+
+        return list(
+            result.scalars().all()
         )
 
     # ============================================================
@@ -532,7 +691,7 @@ class OrderRepository:
         return order
 
     # ============================================================
-    # SUMMARY - PAID ORDERS
+    # ORDER SUMMARY
     # ============================================================
 
     @staticmethod
@@ -541,13 +700,22 @@ class OrderRepository:
     ):
 
         result = await db.execute(
+
             select(
+
+                # ------------------------------------------------
+                # TOTAL ORDERS
+                # ------------------------------------------------
 
                 func.count(
                     Order.id
                 ).label(
                     "total_orders"
                 ),
+
+                # ------------------------------------------------
+                # REVENUE
+                # ------------------------------------------------
 
                 func.coalesce(
                     func.sum(
@@ -558,77 +726,137 @@ class OrderRepository:
                     "revenue"
                 ),
 
+                # ------------------------------------------------
+                # PENDING
+                # ------------------------------------------------
+
                 func.coalesce(
+
                     func.sum(
+
                         case(
+
                             (
-                                Order.status ==
-                                OrderStatus.PENDING,
+                                Order.status
+                                == OrderStatus.PENDING,
+
                                 1,
                             ),
+
                             else_=0,
+
                         )
+
                     ),
+
                     0,
+
                 ).label(
                     "pending"
                 ),
 
+                # ------------------------------------------------
+                # IN TRANSIT
+                # ------------------------------------------------
+
                 func.coalesce(
+
                     func.sum(
+
                         case(
+
                             (
+
                                 Order.status.in_([
                                     OrderStatus.SHIPPED,
                                     OrderStatus.OUT_FOR_DELIVERY,
                                 ]),
+
                                 1,
+
                             ),
+
                             else_=0,
+
                         )
+
                     ),
+
                     0,
+
                 ).label(
                     "in_transit"
                 ),
 
+                # ------------------------------------------------
+                # DELIVERED
+                # ------------------------------------------------
+
                 func.coalesce(
+
                     func.sum(
+
                         case(
+
                             (
-                                Order.status ==
-                                OrderStatus.DELIVERED,
+
+                                Order.status
+                                == OrderStatus.DELIVERED,
+
                                 1,
+
                             ),
+
                             else_=0,
+
                         )
+
                     ),
+
                     0,
+
                 ).label(
                     "delivered"
                 ),
 
+                # ------------------------------------------------
+                # CANCELLED
+                # ------------------------------------------------
+
                 func.coalesce(
+
                     func.sum(
+
                         case(
+
                             (
-                                Order.status ==
-                                OrderStatus.CANCELLED,
+
+                                Order.status
+                                == OrderStatus.CANCELLED,
+
                                 1,
+
                             ),
+
                             else_=0,
+
                         )
+
                     ),
+
                     0,
+
                 ).label(
                     "cancelled"
                 ),
 
             )
+
             .where(
-                Order.payment_status ==
-                PaymentStatus.PAID
+                Order.payment_status
+                == PaymentStatus.PAID
             )
+
         )
 
         return (
@@ -639,6 +867,15 @@ class OrderRepository:
 
     # ============================================================
     # GET ORDERS FOR TRACKING
+    #
+    # Used for Blue Dart tracking synchronization.
+    #
+    # Gets:
+    # - Paid orders
+    # - Not delivered
+    # - Not cancelled
+    # - Shipments
+    # - User
     # ============================================================
 
     @staticmethod
@@ -647,30 +884,42 @@ class OrderRepository:
     ):
 
         result = await db.execute(
+
             select(Order)
+
             .options(
+
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
 
                 joinedload(
                     Order.shipments
                 ),
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
 
                 joinedload(
                     Order.user
                 ),
 
             )
+
             .where(
 
-                Order.payment_status ==
-                PaymentStatus.PAID,
+                Order.payment_status
+                == PaymentStatus.PAID,
 
-                Order.status !=
-                OrderStatus.DELIVERED,
+                Order.status
+                != OrderStatus.DELIVERED,
 
-                Order.status !=
-                OrderStatus.CANCELLED,
+                Order.status
+                != OrderStatus.CANCELLED,
 
             )
+
         )
 
         return (

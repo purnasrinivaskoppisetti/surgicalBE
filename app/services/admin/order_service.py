@@ -1,15 +1,13 @@
-# app/services/admin/order_service.py
-
 from datetime import datetime
 
 from fastapi import HTTPException
 
 from app.repositories.order_repository import (
-    OrderRepository
+    OrderRepository,
 )
 
 from app.repositories.shipment_repository import (
-    ShipmentRepository
+    ShipmentRepository,
 )
 
 from app.models.models import (
@@ -18,7 +16,7 @@ from app.models.models import (
 )
 
 from app.services.bluedart_service import (
-    BlueDartService
+    BlueDartService,
 )
 
 
@@ -39,11 +37,15 @@ class OrderService:
     ):
 
         # --------------------------------------------------------
-        # DEFAULT = PAID
+        # DEFAULT PAYMENT FILTER = PAID
         # --------------------------------------------------------
 
         if not payment_status:
             payment_status = PaymentStatus.PAID
+
+        # --------------------------------------------------------
+        # GET ORDERS
+        # --------------------------------------------------------
 
         orders, total = (
             await OrderRepository.get_orders(
@@ -56,113 +58,395 @@ class OrderService:
             )
         )
 
+        # --------------------------------------------------------
+        # SUMMARY
+        # --------------------------------------------------------
+
         summary = (
             await OrderRepository
             .get_order_summary(db)
         )
 
-        return {
+        # ========================================================
+        # BUILD ORDER RESPONSE
+        # ========================================================
 
-            "orders": [
+        order_list = []
+
+        for order in orders:
+
+            # ----------------------------------------------------
+            # ORDER STATUS
+            # ----------------------------------------------------
+
+            order_status = (
+                order.status.value
+                if order.status
+                else None
+            )
+
+            # ----------------------------------------------------
+            # PAYMENT STATUS
+            # ----------------------------------------------------
+
+            payment_status_value = (
+                order.payment_status.value
+                if order.payment_status
+                else None
+            )
+
+            # ----------------------------------------------------
+            # SHIPMENT
+            #
+            # We use the first shipment as the current shipment.
+            # ----------------------------------------------------
+
+            shipment = (
+                order.shipments[0]
+                if order.shipments
+                else None
+            )
+
+            # ----------------------------------------------------
+            # SHIPMENT STATUS
+            # ----------------------------------------------------
+
+            shipment_status = (
+                shipment.status
+                if shipment
+                else None
+            )
+
+            # ----------------------------------------------------
+            # CURRENT LOCATION
+            # ----------------------------------------------------
+
+            current_location = (
+                shipment.last_scanned_location
+                if shipment
+                else None
+            )
+
+            # ----------------------------------------------------
+            # AWB
+            # ----------------------------------------------------
+
+            awb_number = (
+                shipment.tracking_number
+                if shipment
+                else None
+            )
+
+            # ----------------------------------------------------
+            # TRACKING HISTORY
+            #
+            # Keep the order list lightweight.
+            # We return the latest tracking information here.
+            # Complete history is returned by get_order().
+            # ----------------------------------------------------
+
+            latest_scan = None
+
+            if shipment:
+
+                latest_scan = (
+                    await ShipmentRepository
+                    .get_latest_scan(
+                        db,
+                        shipment.id,
+                    )
+                )
+
+            # ----------------------------------------------------
+            # FALLBACK TO LATEST SCAN
+            # ----------------------------------------------------
+
+            if latest_scan:
+
+                if not shipment_status:
+                    shipment_status = (
+                        latest_scan.scan_status
+                    )
+
+                if not current_location:
+                    current_location = (
+                        latest_scan.scanned_location
+                    )
+
+            # ----------------------------------------------------
+            # ORDER STATUS HISTORY
+            # ----------------------------------------------------
+
+            status_history = []
+
+            try:
+
+                history_rows = (
+                    await OrderRepository
+                    .get_order_status_history(
+                        db,
+                        order.id,
+                    )
+                )
+
+                status_history = [
+
+                    {
+                        "status":
+                            (
+                                history.status.value
+                                if history.status
+                                else None
+                            ),
+
+                        "note":
+                            history.note,
+
+                        "created_at":
+                            history.created_at,
+                    }
+
+                    for history in history_rows
+                ]
+
+            except AttributeError:
+                # If status_history repository method/
+                # relationship isn't available, don't break
+                # the order list.
+                status_history = []
+
+            # ----------------------------------------------------
+            # PRODUCTS
+            # ----------------------------------------------------
+
+            products = [
 
                 {
-                    "id": str(order.id),
+                    "product_id":
+                        str(item.product_id),
 
-                    "order_number":
-                        order.order_number,
+                    "product_name":
+                        item.product_name,
 
-                    "products": [
+                    "product_sku":
+                        item.product_sku,
 
-                        {
-                            "product_id":
-                                str(item.product_id),
+                    "quantity":
+                        item.quantity,
 
-                            "product_name":
-                                item.product_name,
+                    "product_image":
+                        (
+                            item.product.thumbnail_url
+                            if item.product
+                            else None
+                        ),
+                }
 
-                            "product_sku":
-                                item.product_sku,
+                for item in order.items
+            ]
 
-                            "quantity":
-                                item.quantity,
+            # ----------------------------------------------------
+            # ORDER OBJECT
+            # ----------------------------------------------------
 
-                            "product_image":
-                                (
-                                    item.product.thumbnail_url
-                                    if item.product
-                                    else None
-                                ),
-                        }
+            order_list.append({
 
+                "id":
+                    str(order.id),
+
+                "order_number":
+                    order.order_number,
+
+                # ------------------------------------------------
+                # ORDER STATUS
+                # ------------------------------------------------
+
+                "status":
+                    order_status,
+
+                "order_status":
+                    order_status,
+
+                # ------------------------------------------------
+                # PAYMENT STATUS
+                # ------------------------------------------------
+
+                "payment_status":
+                    payment_status_value,
+
+                # ------------------------------------------------
+                # CUSTOMER
+                # ------------------------------------------------
+
+                "customer_name":
+                    (
+                        order.user.full_name
+                        if order.user
+                        else None
+                    ),
+
+                "customer_phone":
+                    (
+                        order.user.phone
+                        if order.user
+                        else None
+                    ),
+
+                # ------------------------------------------------
+                # ITEMS
+                # ------------------------------------------------
+
+                "items_count":
+                    sum(
+                        item.quantity
                         for item in order.items
-                    ],
+                    ),
 
-                    "customer_name":
+                "products":
+                    products,
+
+                # ------------------------------------------------
+                # AMOUNT
+                # ------------------------------------------------
+
+                "amount":
+                    float(
+                        order.total_amount
+                    ),
+
+                # ------------------------------------------------
+                # SHIPMENT / WAYBILL
+                # ------------------------------------------------
+
+                "shipment": {
+
+                    "shipment_id":
                         (
-                            order.user.full_name
-                            if order.user
-                            else None
-                        ),
-
-                    "customer_phone":
-                        (
-                            order.user.phone
-                            if order.user
-                            else None
-                        ),
-
-                    "items_count":
-                        sum(
-                            item.quantity
-                            for item in order.items
-                        ),
-
-                    "amount":
-                        float(
-                            order.total_amount
-                        ),
-
-                    "payment_status":
-                        (
-                            order.payment_status.value
-                            if order.payment_status
-                            else None
-                        ),
-
-                    "status":
-                        (
-                            order.status.value
-                            if order.status
-                            else None
-                        ),
-
-                    "awb_number":
-                        (
-                            order.shipments[0].tracking_number
-                            if order.shipments
+                            str(shipment.id)
+                            if shipment
                             else None
                         ),
 
                     "courier":
                         (
-                            order.shipments[0].courier_name
-                            if order.shipments
+                            shipment.courier_name
+                            if shipment
                             else None
                         ),
 
-                    "shipment_status":
+                    "courier_name":
                         (
-                            order.shipments[0].status
-                            if order.shipments
+                            shipment.courier_name
+                            if shipment
                             else None
                         ),
 
-                    "order_date":
-                        order.created_at,
-                }
+                    "awb_number":
+                        awb_number,
 
-                for order in orders
-            ],
+                    "tracking_number":
+                        awb_number,
+
+                    "waybill_generated":
+                        bool(
+                            awb_number
+                        ),
+
+                    "waybill_status":
+                        shipment_status,
+
+                    "status":
+                        shipment_status,
+
+                    "status_code":
+                        (
+                            shipment.status_code
+                            if shipment
+                            else None
+                        ),
+
+                    "current_location":
+                        current_location,
+
+                    "last_scanned_location":
+                        (
+                            shipment.last_scanned_location
+                            if shipment
+                            else None
+                        ),
+
+                    "last_scanned_at":
+                        (
+                            shipment.last_scanned_at
+                            if shipment
+                            else None
+                        ),
+
+                    "estimated_delivery":
+                        (
+                            shipment.estimated_delivery
+                            if shipment
+                            else None
+                        ),
+
+                    "shipped_at":
+                        (
+                            shipment.shipped_at
+                            if shipment
+                            else None
+                        ),
+
+                    "delivered_at":
+                        (
+                            shipment.delivered_at
+                            if shipment
+                            else None
+                        ),
+                },
+
+                # ------------------------------------------------
+                # QUICK WAYBILL FIELDS
+                # ------------------------------------------------
+
+                "awb_number":
+                    awb_number,
+
+                "courier":
+                    (
+                        shipment.courier_name
+                        if shipment
+                        else None
+                    ),
+
+                "shipment_status":
+                    shipment_status,
+
+                "current_location":
+                    current_location,
+
+                # ------------------------------------------------
+                # ORDER STATUS HISTORY
+                # ------------------------------------------------
+
+                "status_history":
+                    status_history,
+
+                # ------------------------------------------------
+                # DATE
+                # ------------------------------------------------
+
+                "order_date":
+                    order.created_at,
+            })
+
+        # ========================================================
+        # FINAL RESPONSE
+        # ========================================================
+
+        return {
+
+            "orders":
+                order_list,
 
             "summary": {
 
@@ -189,14 +473,15 @@ class OrderService:
 
             "pagination": {
 
-                "page": page,
+                "page":
+                    page,
 
                 "page_size":
                     page_size,
 
                 "total":
                     total,
-            }
+            },
         }
 
     # ============================================================
@@ -209,11 +494,15 @@ class OrderService:
         order_id,
     ):
 
+        # --------------------------------------------------------
+        # GET ORDER
+        # --------------------------------------------------------
+
         order = (
             await OrderRepository
             .get_order_by_id(
                 db,
-                order_id
+                order_id,
             )
         )
 
@@ -221,7 +510,7 @@ class OrderService:
 
             raise HTTPException(
                 status_code=404,
-                detail="Order not found"
+                detail="Order not found",
             )
 
         # --------------------------------------------------------
@@ -238,7 +527,7 @@ class OrderService:
                 detail=(
                     "Only paid orders are "
                     "available in admin shipping flow."
-                )
+                ),
             )
 
         # ========================================================
@@ -276,7 +565,7 @@ class OrderService:
 
         total_weight = max(
             0.5,
-            total_weight
+            total_weight,
         )
 
         # ========================================================
@@ -337,20 +626,207 @@ class OrderService:
 
         for shipment in order.shipments:
 
+            # ----------------------------------------------------
+            # COMPLETE BLUE DART HISTORY
+            # ----------------------------------------------------
+
+            scan_logs = (
+                await ShipmentRepository
+                .get_scan_logs(
+                    db,
+                    shipment.id,
+                )
+            )
+
+            # ----------------------------------------------------
+            # TRACKING HISTORY
+            # ----------------------------------------------------
+
+            tracking_history = [
+
+                {
+                    "scan_id":
+                        str(scan.id),
+
+                    "status":
+                        scan.scan_status,
+
+                    "status_code":
+                        scan.scan_code,
+
+                    "scan_type":
+                        scan.scan_type,
+
+                    "scan_group_type":
+                        scan.scan_group_type,
+
+                    "location":
+                        scan.scanned_location,
+
+                    "scanned_location":
+                        scan.scanned_location,
+
+                    "scanned_at":
+                        scan.scanned_at,
+                }
+
+                for scan in scan_logs
+            ]
+
+            # ----------------------------------------------------
+            # LATEST SCAN
+            # ----------------------------------------------------
+
+            latest_scan = (
+                scan_logs[0]
+                if scan_logs
+                else None
+            )
+
+            # ----------------------------------------------------
+            # CURRENT STATUS
+            # ----------------------------------------------------
+
+            current_status = (
+                shipment.status
+            )
+
+            if (
+                not current_status
+                and latest_scan
+            ):
+
+                current_status = (
+                    latest_scan.scan_status
+                )
+
+            # ----------------------------------------------------
+            # CURRENT LOCATION
+            # ----------------------------------------------------
+
+            current_location = (
+                shipment.last_scanned_location
+            )
+
+            if (
+                not current_location
+                and latest_scan
+            ):
+
+                current_location = (
+                    latest_scan.scanned_location
+                )
+
+            # ----------------------------------------------------
+            # CURRENT STATUS CODE
+            # ----------------------------------------------------
+
+            current_status_code = (
+                shipment.status_code
+            )
+
+            if (
+                not current_status_code
+                and latest_scan
+            ):
+
+                current_status_code = (
+                    latest_scan.scan_code
+                )
+
+            # ----------------------------------------------------
+            # LAST SCAN TIME
+            # ----------------------------------------------------
+
+            last_scanned_at = (
+                shipment.last_scanned_at
+            )
+
+            if (
+                not last_scanned_at
+                and latest_scan
+            ):
+
+                last_scanned_at = (
+                    latest_scan.scanned_at
+                )
+
+            # ----------------------------------------------------
+            # SHIPMENT
+            # ----------------------------------------------------
+
             shipments.append({
 
                 "shipment_id":
                     str(shipment.id),
 
+                # ------------------------------------------------
+                # COURIER
+                # ------------------------------------------------
+
                 "courier_name":
                     shipment.courier_name,
 
-                # IMPORTANT
+                "courier":
+                    shipment.courier_name,
+
+                # ------------------------------------------------
+                # AWB
+                # ------------------------------------------------
+
                 "awb_number":
                     shipment.tracking_number,
 
                 "tracking_number":
                     shipment.tracking_number,
+
+                "waybill_generated":
+                    bool(
+                        shipment.tracking_number
+                    ),
+
+                # ------------------------------------------------
+                # WAYBILL STATUS
+                # ------------------------------------------------
+
+                "waybill_status":
+                    current_status,
+
+                "status":
+                    current_status,
+
+                "status_code":
+                    current_status_code,
+
+                # ------------------------------------------------
+                # LOCATION
+                # ------------------------------------------------
+
+                "current_location":
+                    current_location,
+
+                "last_scanned_location":
+                    shipment.last_scanned_location,
+
+                "last_scanned_at":
+                    last_scanned_at,
+
+                # ------------------------------------------------
+                # DELIVERY
+                # ------------------------------------------------
+
+                "estimated_delivery":
+                    shipment.estimated_delivery,
+
+                "shipped_at":
+                    shipment.shipped_at,
+
+                "delivered_at":
+                    shipment.delivered_at,
+
+                # ------------------------------------------------
+                # BLUE DART DATA
+                # ------------------------------------------------
 
                 "pickup_token_number":
                     shipment.pickup_token_number,
@@ -376,12 +852,17 @@ class OrderService:
                 "destination_location":
                     shipment.destination_location,
 
+                # ------------------------------------------------
+                # PACKAGE
+                # ------------------------------------------------
+
                 "actual_weight":
                     (
                         float(
                             shipment.actual_weight
                         )
                         if shipment.actual_weight
+                        is not None
                         else None
                     ),
 
@@ -391,6 +872,7 @@ class OrderService:
                             shipment.length
                         )
                         if shipment.length
+                        is not None
                         else None
                     ),
 
@@ -400,6 +882,7 @@ class OrderService:
                             shipment.breadth
                         )
                         if shipment.breadth
+                        is not None
                         else None
                     ),
 
@@ -409,32 +892,16 @@ class OrderService:
                             shipment.height
                         )
                         if shipment.height
+                        is not None
                         else None
                     ),
 
                 "piece_count":
                     shipment.piece_count,
 
-                "status":
-                    shipment.status,
-
-                "status_code":
-                    shipment.status_code,
-
-                "last_scanned_location":
-                    shipment.last_scanned_location,
-
-                "last_scanned_at":
-                    shipment.last_scanned_at,
-
-                "estimated_delivery":
-                    shipment.estimated_delivery,
-
-                "shipped_at":
-                    shipment.shipped_at,
-
-                "delivered_at":
-                    shipment.delivered_at,
+                # ------------------------------------------------
+                # DOCUMENTS
+                # ------------------------------------------------
 
                 "awb_pdf_url":
                     shipment.awb_pdf_url,
@@ -442,9 +909,63 @@ class OrderService:
                 "label_pdf_url":
                     shipment.label_pdf_url,
 
+                # ------------------------------------------------
+                # MPS
+                # ------------------------------------------------
+
                 "mps_details":
                     shipment.mps_details,
+
+                # ------------------------------------------------
+                # COMPLETE TRACKING
+                # ------------------------------------------------
+
+                "tracking_count":
+                    len(tracking_history),
+
+                "tracking_history":
+                    tracking_history,
             })
+
+        # ========================================================
+        # ORDER STATUS HISTORY
+        # ========================================================
+
+        status_history = []
+
+        try:
+
+            history_rows = (
+                await OrderRepository
+                .get_order_status_history(
+                    db,
+                    order.id,
+                )
+            )
+
+            status_history = [
+
+                {
+                    "status":
+                        (
+                            history.status.value
+                            if history.status
+                            else None
+                        ),
+
+                    "note":
+                        history.note,
+
+                    "created_at":
+                        history.created_at,
+                }
+
+                for history in history_rows
+            ]
+
+        except AttributeError:
+
+            status_history = []
 
         # ========================================================
         # ITEMS
@@ -537,6 +1058,36 @@ class OrderService:
         ]
 
         # ========================================================
+        # CURRENT ORDER STATUS
+        # ========================================================
+
+        order_status = (
+            order.status.value
+            if order.status
+            else None
+        )
+
+        # ========================================================
+        # CURRENT PAYMENT STATUS
+        # ========================================================
+
+        current_payment_status = (
+            order.payment_status.value
+            if order.payment_status
+            else None
+        )
+
+        # ========================================================
+        # CURRENT SHIPMENT SUMMARY
+        # ========================================================
+
+        current_shipment = (
+            shipments[0]
+            if shipments
+            else None
+        )
+
+        # ========================================================
         # FINAL RESPONSE
         # ========================================================
 
@@ -551,23 +1102,98 @@ class OrderService:
             "order_date":
                 order.created_at,
 
+            # ====================================================
+            # MAIN STATUSES
+            # ====================================================
+
             "status":
-                (
-                    order.status.value
-                    if order.status
-                    else None
-                ),
+                order_status,
+
+            "order_status":
+                order_status,
 
             "payment_status":
-                (
-                    order.payment_status.value
-                    if order.payment_status
-                    else None
-                ),
+                current_payment_status,
 
-            # ----------------------------------------------------
+            # ====================================================
+            # STATUS SUMMARY
+            # ====================================================
+
+            "status_summary": {
+
+                "order_status":
+                    order_status,
+
+                "payment_status":
+                    current_payment_status,
+
+                "waybill_generated":
+                    (
+                        current_shipment[
+                            "waybill_generated"
+                        ]
+                        if current_shipment
+                        else False
+                    ),
+
+                "waybill_status":
+                    (
+                        current_shipment[
+                            "waybill_status"
+                        ]
+                        if current_shipment
+                        else None
+                    ),
+
+                "awb_number":
+                    (
+                        current_shipment[
+                            "awb_number"
+                        ]
+                        if current_shipment
+                        else None
+                    ),
+
+                "courier":
+                    (
+                        current_shipment[
+                            "courier"
+                        ]
+                        if current_shipment
+                        else None
+                    ),
+
+                "current_location":
+                    (
+                        current_shipment[
+                            "current_location"
+                        ]
+                        if current_shipment
+                        else None
+                    ),
+
+                "last_scanned_at":
+                    (
+                        current_shipment[
+                            "last_scanned_at"
+                        ]
+                        if current_shipment
+                        else None
+                    ),
+
+                "estimated_delivery":
+                    (
+                        current_shipment[
+                            "estimated_delivery"
+                        ]
+                        if current_shipment
+                        else None
+                    ),
+            },
+
+            # ====================================================
             # CUSTOMER
-            # ----------------------------------------------------
+            # ====================================================
 
             "customer": {
 
@@ -600,9 +1226,9 @@ class OrderService:
                     ),
             },
 
-            # ----------------------------------------------------
+            # ====================================================
             # SHIPPING ADDRESS
-            # ----------------------------------------------------
+            # ====================================================
 
             "shipping_address": {
 
@@ -688,9 +1314,9 @@ class OrderService:
                     ),
             },
 
-            # ----------------------------------------------------
+            # ====================================================
             # PACKAGE
-            # ----------------------------------------------------
+            # ====================================================
 
             "package_summary": {
 
@@ -701,63 +1327,78 @@ class OrderService:
                     total_items,
 
                 "is_cod":
-                    (
-                        any(
-                            payment.payment_method.value
-                            == "cod"
-                            for payment
-                            in order.payments
-                            if payment.payment_method
-                        )
+                    any(
+                        payment.payment_method.value
+                        == "cod"
+                        for payment
+                        in order.payments
+                        if payment.payment_method
                     ),
             },
 
-            # ----------------------------------------------------
+            # ====================================================
             # PRODUCTS
-            # ----------------------------------------------------
+            # ====================================================
 
             "items":
                 items,
 
-            # ----------------------------------------------------
+            # ====================================================
             # PRICING
-            # ----------------------------------------------------
+            # ====================================================
 
             "pricing": {
 
                 "subtotal":
-                    float(order.subtotal),
+                    float(
+                        order.subtotal
+                    ),
 
                 "gst":
-                    float(order.gst_amount),
+                    float(
+                        order.gst_amount
+                    ),
 
                 "shipping":
-                    float(order.shipping_charge),
+                    float(
+                        order.shipping_charge
+                    ),
 
                 "discount":
-                    float(order.discount),
+                    float(
+                        order.discount
+                    ),
 
                 "grand_total":
-                    float(order.total_amount),
+                    float(
+                        order.total_amount
+                    ),
             },
 
-            # ----------------------------------------------------
+            # ====================================================
             # PAYMENTS
-            # ----------------------------------------------------
+            # ====================================================
 
             "payments":
                 payments,
 
-            # ----------------------------------------------------
-            # BLUE DART
-            # ----------------------------------------------------
+            # ====================================================
+            # COMPLETE SHIPMENT INFORMATION
+            # ====================================================
 
             "shipments":
                 shipments,
 
-            # ----------------------------------------------------
-            # ORDER FINAL DATA
-            # ----------------------------------------------------
+            # ====================================================
+            # ORDER STATUS HISTORY
+            # ====================================================
+
+            "status_history":
+                status_history,
+
+            # ====================================================
+            # FINAL ORDER DATA
+            # ====================================================
 
             "cancel_reason":
                 order.cancel_reason,
@@ -767,7 +1408,7 @@ class OrderService:
         }
 
     # ============================================================
-    # UPDATE STATUS
+    # UPDATE ORDER STATUS
     # ============================================================
 
     @staticmethod
@@ -807,7 +1448,7 @@ class OrderService:
         )
 
     # ============================================================
-    # CANCEL
+    # CANCEL ORDER
     # ============================================================
 
     @staticmethod
@@ -825,7 +1466,6 @@ class OrderService:
                 reason,
             )
         )
-    
 
     # ============================================================
     # SYNC BLUE DART STATUS
@@ -837,11 +1477,15 @@ class OrderService:
         order_id,
     ):
 
+        # --------------------------------------------------------
+        # GET ORDER
+        # --------------------------------------------------------
+
         order = (
             await OrderRepository
             .get_order_by_id(
                 db,
-                order_id
+                order_id,
             )
         )
 
@@ -849,7 +1493,7 @@ class OrderService:
 
             raise HTTPException(
                 status_code=404,
-                detail="Order not found"
+                detail="Order not found",
             )
 
         # --------------------------------------------------------
@@ -863,7 +1507,9 @@ class OrderService:
 
             raise HTTPException(
                 status_code=400,
-                detail="Only paid orders can be tracked."
+                detail=(
+                    "Only paid orders can be tracked."
+                ),
             )
 
         # --------------------------------------------------------
@@ -873,21 +1519,46 @@ class OrderService:
         if not order.shipments:
 
             return {
-                "success": True,
-                "message": (
-                    "Waybill has not been generated yet."
-                ),
+
+                "success":
+                    True,
+
+                "message":
+                    "Waybill has not been generated yet.",
+
                 "data": {
+
                     "order_id":
                         str(order.id),
 
+                    "order_number":
+                        order.order_number,
+
                     "order_status":
-                        order.status.value,
+                        (
+                            order.status.value
+                            if order.status
+                            else None
+                        ),
+
+                    "payment_status":
+                        (
+                            order.payment_status.value
+                            if order.payment_status
+                            else None
+                        ),
 
                     "awb_number":
                         None,
-                }
+
+                    "waybill_generated":
+                        False,
+                },
             }
+
+        # --------------------------------------------------------
+        # CURRENT SHIPMENT
+        # --------------------------------------------------------
 
         shipment = order.shipments[0]
 
@@ -898,20 +1569,41 @@ class OrderService:
         if not shipment.tracking_number:
 
             return {
-                "success": True,
-                "message": (
-                    "Waybill generation pending."
-                ),
+
+                "success":
+                    True,
+
+                "message":
+                    "Waybill generation pending.",
+
                 "data": {
+
                     "order_id":
                         str(order.id),
 
+                    "order_number":
+                        order.order_number,
+
                     "order_status":
-                        order.status.value,
+                        (
+                            order.status.value
+                            if order.status
+                            else None
+                        ),
+
+                    "payment_status":
+                        (
+                            order.payment_status.value
+                            if order.payment_status
+                            else None
+                        ),
 
                     "awb_number":
                         None,
-                }
+
+                    "waybill_generated":
+                        False,
+                },
             }
 
         # ========================================================
@@ -919,7 +1611,8 @@ class OrderService:
         # ========================================================
 
         tracking_data = (
-            await BlueDartService.track_shipment(
+            await BlueDartService
+            .track_shipment(
                 shipment.tracking_number
             )
         )
@@ -930,10 +1623,14 @@ class OrderService:
 
         scans = tracking_data.get(
             "scans",
-            []
+            [],
         )
 
         if scans:
+
+            # ----------------------------------------------------
+            # ASSUME BLUE DART RETURNS LATEST FIRST
+            # ----------------------------------------------------
 
             latest = scans[0]
 
@@ -968,7 +1665,7 @@ class OrderService:
             )
 
             # ----------------------------------------------------
-            # SAVE SHIPMENT STATUS
+            # UPDATE CURRENT BLUE DART STATUS
             # ----------------------------------------------------
 
             shipment.status = (
@@ -984,6 +1681,9 @@ class OrderService:
             shipment.last_scanned_location = (
                 latest.get(
                     "scanned_location"
+                )
+                or latest.get(
+                    "location"
                 )
             )
 
@@ -1098,13 +1798,13 @@ class OrderService:
                     )
 
             # ====================================================
-            # SAVE SCAN LOGS
+            # SAVE ALL BLUE DART SCANS
             # ====================================================
 
             await ShipmentRepository.save_scan_logs(
                 db,
                 shipment.id,
-                scans
+                scans,
             )
 
         # ========================================================
@@ -1125,15 +1825,38 @@ class OrderService:
             order
         )
 
+        # ========================================================
+        # GET COMPLETE TRACKING HISTORY
+        # ========================================================
+
+        tracking_history = (
+            await ShipmentRepository
+            .get_tracking_history(
+                db,
+                shipment.id,
+            )
+        )
+
+        # ========================================================
+        # FINAL RESPONSE
+        # ========================================================
+
         return {
 
-            "success": True,
+            "success":
+                True,
 
-            "message": (
-                "Blue Dart tracking synchronized successfully."
-            ),
+            "message":
+                (
+                    "Blue Dart tracking "
+                    "synchronized successfully."
+                ),
 
             "data": {
+
+                # ------------------------------------------------
+                # ORDER
+                # ------------------------------------------------
 
                 "order_id":
                     str(order.id),
@@ -1148,12 +1871,20 @@ class OrderService:
                         else None
                     ),
 
+                # ------------------------------------------------
+                # PAYMENT
+                # ------------------------------------------------
+
                 "payment_status":
                     (
                         order.payment_status.value
                         if order.payment_status
                         else None
                     ),
+
+                # ------------------------------------------------
+                # DELIVERY
+                # ------------------------------------------------
 
                 "delivered":
                     (
@@ -1163,6 +1894,10 @@ class OrderService:
 
                 "delivered_at":
                     order.delivered_at,
+
+                # ------------------------------------------------
+                # SHIPMENT
+                # ------------------------------------------------
 
                 "shipment": {
 
@@ -1178,11 +1913,22 @@ class OrderService:
                     "tracking_number":
                         shipment.tracking_number,
 
+                    "waybill_generated":
+                        bool(
+                            shipment.tracking_number
+                        ),
+
+                    "waybill_status":
+                        shipment.status,
+
                     "status":
                         shipment.status,
 
                     "status_code":
                         shipment.status_code,
+
+                    "current_location":
+                        shipment.last_scanned_location,
 
                     "last_scanned_location":
                         shipment.last_scanned_location,
@@ -1200,7 +1946,21 @@ class OrderService:
                         shipment.delivered_at,
                 },
 
+                # ------------------------------------------------
+                # COMPLETE TRACKING HISTORY
+                # ------------------------------------------------
+
+                "tracking_history":
+                    tracking_history,
+
+                "tracking_count":
+                    len(tracking_history),
+
+                # ------------------------------------------------
+                # RAW BLUE DART RESPONSE
+                # ------------------------------------------------
+
                 "blue_dart_tracking":
                     tracking_data,
-            }
+            },
         }
