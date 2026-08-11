@@ -1,6 +1,6 @@
 from uuid import UUID
 from decimal import Decimal
-
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import HTTPException
 from sqlalchemy.exc import SQLAlchemyError
 
@@ -534,4 +534,35 @@ class CartService:
                 raise HTTPException(
                     status_code=500,
                     detail="Something went wrong"
+                )
+
+
+        @staticmethod
+        async def clear_cart(
+            db: AsyncSession,
+            user_id: UUID
+        ):
+            try:
+
+                await CartRepository.clear_cart(
+                    db=db,
+                    user_id=user_id
+                )
+
+                return {
+                    "success": True,
+                    "status_code": 200,
+                    "message": "Cart cleared successfully"
+                }
+
+            except SQLAlchemyError:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Database error while clearing cart"
+                )
+
+            except Exception:
+                raise HTTPException(
+                    status_code=500,
+                    detail="Something went wrong while clearing cart"
                 )

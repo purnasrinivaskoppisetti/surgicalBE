@@ -2,7 +2,7 @@ from datetime import datetime
 
 from fastapi import HTTPException
 from razorpay.errors import SignatureVerificationError
-
+from app.services.customer.cart_service import CartService
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -315,12 +315,18 @@ class BillingService:
             order.status = (
                 OrderStatus.CONFIRMED
             )
+        await db.commit()
+        
+        await CartService.clear_cart(
+            db=db,
+            user_id=user_id
+        )
 
         # ========================================================
         # 7. COMMIT PAYMENT FIRST
         # ========================================================
 
-        await db.commit()
+     
 
         # ========================================================
         # 8. RELOAD COMPLETE ORDER

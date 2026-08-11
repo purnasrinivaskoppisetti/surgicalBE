@@ -113,6 +113,26 @@ class CartRepository:
 
         await db.commit()
 
+    @staticmethod
+    async def clear_cart(
+            db: AsyncSession,
+            user_id: UUID
+        ):
+            result = await db.execute(
+                select(CartItem).where(
+                    CartItem.user_id == user_id
+                )
+            )
+    
+            cart_items = result.scalars().all()
+    
+            for item in cart_items:
+                await db.delete(item)
+    
+            await db.commit()
+    
+            return True
+
 
     @staticmethod
     async def get_all_cart_items(
@@ -135,3 +155,8 @@ class CartRepository:
         )
 
         return result.unique().scalars().all()
+
+
+
+
+    
