@@ -29,7 +29,9 @@ class ProductRepository:
             .options(
                 joinedload(Product.category),
                 joinedload(Product.images),
-                joinedload(Product.reviews)
+                joinedload(Product.reviews),
+                joinedload(Product.specifications),
+                joinedload(Product.reviews).joinedload(Review.user)
             )
             .where(
                 Product.id == product_id,

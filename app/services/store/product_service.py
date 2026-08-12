@@ -143,7 +143,7 @@ class ProductService:
         product_id: UUID
     ):
 
-        product = await ProductRepository.get_product_by_id(
+        product = await ProductRepository.get_by_id(
             db=db,
             product_id=product_id
         )

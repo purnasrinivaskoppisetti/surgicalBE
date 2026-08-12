@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.models import Banner
 
-
 class BannerRepository:
 
     @staticmethod
