@@ -85,7 +85,6 @@ class BlueDartService:
 
         cls._jwt_token = token
 
-        # Blue Dart token is approximately 1 hour.
         # Keep a small safety margin.
         cls._token_expiry = current_time + 3500
 
@@ -105,7 +104,15 @@ class BlueDartService:
         pickup_time: str = "16:00",
     ) -> dict:
 
+        # ============================================================
+        # 1. GET JWT TOKEN
+        # ============================================================
+
         token = await cls.get_jwt_token()
+
+        # ============================================================
+        # 2. BLUE DART TRANSIT TIME URL
+        # ============================================================
 
         url = (
             f"{settings.BLUEDART_BASE_URL}"
@@ -113,10 +120,70 @@ class BlueDartService:
             "GetDomesticTransitTimeForPinCodeandProduct"
         )
 
+        # ============================================================
+        # 3. PINCODES
+        # ============================================================
+
         origin = (
             origin_pincode
             or settings.BLUEDART_ORIGIN_PINCODE
         )
+
+        origin = str(origin).strip()
+        destination_pincode = str(
+            destination_pincode
+        ).strip()
+
+        # ============================================================
+        # 4. VALIDATE ORIGIN PINCODE
+        # ============================================================
+
+        if not origin.isdigit() or len(origin) != 6:
+
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid origin pincode: {origin}",
+            )
+
+        # ============================================================
+        # 5. VALIDATE DESTINATION PINCODE
+        # ============================================================
+
+        if (
+            not destination_pincode.isdigit()
+            or len(destination_pincode) != 6
+        ):
+
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    f"Invalid destination pincode: "
+                    f"{destination_pincode}"
+                ),
+            )
+
+        # ============================================================
+        # 6. NORMALIZE PICKUP TIME
+        # ============================================================
+
+        pickup_time = str(
+            pickup_time
+        ).strip()
+
+        if (
+            len(pickup_time) == 4
+            and pickup_time.isdigit()
+        ):
+
+            pickup_time = (
+                pickup_time[:2]
+                + ":"
+                + pickup_time[2:]
+            )
+
+        # ============================================================
+        # 7. HEADERS
+        # ============================================================
 
         headers = {
             "JWTToken": token,
@@ -124,17 +191,30 @@ class BlueDartService:
             "Accept": "application/json",
         }
 
-        current_millis = int(time.time() * 1000)
+        # ============================================================
+        # 8. BLUE DART PICKUP DATE
+        # ============================================================
 
-        p_pudate = f"/Date({current_millis})/"
+        current_millis = int(
+            time.time() * 1000
+        )
+
+        p_pudate = (
+            f"/Date({current_millis})/"
+        )
+
+        # ============================================================
+        # 9. PAYLOAD
+        # ============================================================
 
         payload = {
-            "pPinCode": origin,
+            "pPinCodeFrom": origin,
             "pPinCodeTo": destination_pincode,
             "pProductCode": product_code,
             "pSubProductCode": sub_product_code,
             "pPudate": p_pudate,
-            "pPickupTime": pickup_time.replace(":", ""),
+            "pPickupTime": pickup_time,
+
             "profile": {
                 "LoginID": settings.BLUEDART_LOGIN_ID,
                 "LicenceKey": settings.BLUEDART_LICENSE_KEY,
@@ -142,8 +222,16 @@ class BlueDartService:
             },
         }
 
+        # ============================================================
+        # 10. CALL BLUE DART
+        # ============================================================
+
         try:
-            async with httpx.AsyncClient(timeout=30) as client:
+
+            async with httpx.AsyncClient(
+                timeout=30
+            ) as client:
+
                 response = await client.post(
                     url,
                     headers=headers,
@@ -151,53 +239,194 @@ class BlueDartService:
                 )
 
         except httpx.RequestError as exc:
+
             raise HTTPException(
                 status_code=502,
-                detail=f"Blue Dart Transit API request failed: {str(exc)}",
+                detail=(
+                    "Blue Dart Transit API request failed: "
+                    f"{str(exc)}"
+                ),
             )
+
+        # ============================================================
+        # 11. HTTP RESPONSE CHECK
+        # ============================================================
 
         if response.status_code != 200:
+
             raise HTTPException(
                 status_code=400,
-                detail=f"Transit Time API Failed: {response.text}",
+                detail=(
+                    "Transit Time API Failed: "
+                    f"{response.text}"
+                ),
             )
 
+        # ============================================================
+        # 12. PARSE RESPONSE
+        # ============================================================
+
         try:
-            result = response.json().get(
+
+            response_json = response.json()
+
+        except Exception:
+
+            raise HTTPException(
+                status_code=502,
+                detail=(
+                    "Invalid JSON response from "
+                    "Blue Dart Transit API."
+                ),
+            )
+
+        # ============================================================
+        # 13. GET BLUE DART RESULT
+        # ============================================================
+
+        result = response_json.get(
+            "GetDomesticTransitTimeForPinCodeandProductResult",
+            {},
+        )
+
+        # ============================================================
+        # 14. FALLBACK RESPONSE KEY
+        # ============================================================
+
+        if not result:
+
+            result = response_json.get(
                 "GetDomesticTransitTimeForPinCodeandProduct",
                 {},
             )
-        except Exception:
+
+        # ============================================================
+        # 15. EMPTY RESPONSE
+        # ============================================================
+
+        if not result:
+
             raise HTTPException(
                 status_code=502,
-                detail="Invalid response from Blue Dart Transit API.",
+                detail=(
+                    "Blue Dart returned an empty "
+                    "Transit Time response."
+                ),
             )
 
+        # ============================================================
+        # 16. BLUE DART ERROR
+        # ============================================================
+
         if result.get("IsError"):
+
             return {
                 "is_serviceable": False,
+
+                "origin_pincode": origin,
+
+                "destination_pincode":
+                    destination_pincode,
+
                 "expected_delivery_date": None,
-                "message": result.get(
-                    "ErrorMessage",
-                    "Transit time calculation failed",
-                ),
+
+                "expected_pod_date": None,
+
+                "delivery_area_code":
+                    result.get("Area"),
+
+                "service_center":
+                    result.get("ServiceCenter"),
+
+                "additional_days":
+                    result.get(
+                        "AdditionalDays",
+                        "0",
+                    ),
+
+                "apex_additional_days":
+                    result.get(
+                        "ApexAdditionalDays",
+                        "0",
+                    ),
+
+                "ground_additional_days":
+                    result.get(
+                        "GroundAdditionalDays",
+                        "0",
+                    ),
+
+                "edl_message":
+                    result.get("EDLMessage"),
+
+                "message":
+                    result.get(
+                        "ErrorMessage",
+                        "Transit time unavailable.",
+                    ),
             }
+
+        # ============================================================
+        # 17. SUCCESS RESPONSE
+        # ============================================================
 
         return {
             "is_serviceable": True,
-            "origin_pincode": origin,
-            "destination_pincode": destination_pincode,
-            "expected_delivery_date": result.get(
-                "ExpectedDateDelivery"
-            ),
-            "delivery_area_code": result.get("Area"),
-            "service_center": result.get("ServiceCenter"),
-            "additional_days": result.get(
-                "AdditionalDays",
-                "0",
-            ),
-        }
 
+            "origin_pincode": origin,
+
+            "destination_pincode":
+                destination_pincode,
+
+            "expected_delivery_date":
+                result.get(
+                    "ExpectedDateDelivery"
+                ),
+
+            "expected_pod_date":
+                result.get(
+                    "ExpectedDatePOD"
+                ),
+
+            "delivery_area_code":
+                result.get(
+                    "Area"
+                ),
+
+            "service_center":
+                result.get(
+                    "ServiceCenter"
+                ),
+
+            "additional_days":
+                result.get(
+                    "AdditionalDays",
+                    "0",
+                ),
+
+            "apex_additional_days":
+                result.get(
+                    "ApexAdditionalDays",
+                    "0",
+                ),
+
+            "ground_additional_days":
+                result.get(
+                    "GroundAdditionalDays",
+                    "0",
+                ),
+
+            "edl_message":
+                result.get(
+                    "EDLMessage"
+                ),
+
+            "message":
+                result.get(
+                    "ErrorMessage"
+                )
+                or "Transit time calculated successfully.",
+        }
     # ============================================================
     # SERVICEABILITY
     # ============================================================
