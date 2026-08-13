@@ -1,9 +1,15 @@
-from datetime import datetime
+import logging
+
+from datetime import datetime, timezone
 
 from fastapi import HTTPException
-from razorpay.errors import SignatureVerificationError
-from app.services.customer.cart_service import CartService
+
+from razorpay.errors import (
+    SignatureVerificationError,
+)
+
 from sqlalchemy import select
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.razorpay import client
@@ -11,6 +17,7 @@ from app.core.razorpay import client
 from app.models.models import (
     PaymentStatus,
     OrderStatus,
+    ProductVariant,
     StoreSetting,
     Shipment,
 )
@@ -19,8 +26,8 @@ from app.repositories.bill_repository import (
     BillRepository,
 )
 
-from app.repositories.order_repository import (
-    OrderRepository,
+from app.repositories.cart_repository import (
+    CartRepository,
 )
 
 from app.repositories.shipment_repository import (
@@ -30,6 +37,9 @@ from app.repositories.shipment_repository import (
 from app.services.bluedart_service import (
     BlueDartService,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class BillingService:
@@ -50,8 +60,8 @@ class BillingService:
         # --------------------------------------------------------
 
         order = await BillRepository.get_order(
-            db,
-            order_id,
+            db=db,
+            order_id=order_id,
         )
 
         if not order:
@@ -62,7 +72,7 @@ class BillingService:
             )
 
         # --------------------------------------------------------
-        # VERIFY OWNER
+        # VERIFY ORDER OWNER
         # --------------------------------------------------------
 
         if str(order.user_id) != str(user_id):
@@ -73,14 +83,27 @@ class BillingService:
             )
 
         # --------------------------------------------------------
+        # VERIFY ORDER STATUS
+        # --------------------------------------------------------
+
+        if (
+            order.payment_status
+            == PaymentStatus.PAID
+        ):
+
+            raise HTTPException(
+                status_code=400,
+                detail="Order payment is already completed",
+            )
+
+        # --------------------------------------------------------
         # GET PAYMENT
         # --------------------------------------------------------
 
         payment = (
-            await BillRepository
-            .get_payment_by_order(
-                db,
-                order.id,
+            await BillRepository.get_payment_by_order(
+                db=db,
+                order_id=order.id,
             )
         )
 
@@ -88,18 +111,40 @@ class BillingService:
 
             raise HTTPException(
                 status_code=404,
-                detail="Payment not found",
+                detail="Payment record not found",
             )
 
         # --------------------------------------------------------
-        # ALREADY PAID
+        # PAYMENT ALREADY PAID
         # --------------------------------------------------------
 
-        if payment.status == PaymentStatus.PAID:
+        if (
+            payment.status
+            == PaymentStatus.PAID
+        ):
 
             raise HTTPException(
                 status_code=400,
-                detail="Order payment is already completed",
+                detail="Payment is already completed",
+            )
+
+        # --------------------------------------------------------
+        # AMOUNT
+        # --------------------------------------------------------
+
+        amount_in_paise = int(
+            round(
+                float(
+                    order.total_amount
+                ) * 100
+            )
+        )
+
+        if amount_in_paise <= 0:
+
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid order amount",
             )
 
         # --------------------------------------------------------
@@ -108,29 +153,31 @@ class BillingService:
 
         try:
 
-            razorpay_order = client.order.create(
-                {
-                    "amount": int(
-                        float(
-                            order.total_amount
-                        ) * 100
-                    ),
+            razorpay_order = client.order.create({
 
-                    "currency": "INR",
+                "amount":
+                    amount_in_paise,
 
-                    "receipt": str(
+                "currency":
+                    "INR",
+
+                "receipt":
+                    str(
                         order.order_number
                     ),
-                }
-            )
+
+            })
 
         except Exception as exc:
+
+            logger.exception(
+                "Failed to create Razorpay order"
+            )
 
             raise HTTPException(
                 status_code=502,
                 detail=(
-                    "Unable to create Razorpay order: "
-                    f"{str(exc)}"
+                    "Unable to create Razorpay order"
                 ),
             )
 
@@ -140,6 +187,10 @@ class BillingService:
 
         payment.gateway_order_id = (
             razorpay_order["id"]
+        )
+
+        payment.amount = (
+            order.total_amount
         )
 
         await db.commit()
@@ -158,6 +209,9 @@ class BillingService:
                 "order_id":
                     str(order.id),
 
+                "order_number":
+                    order.order_number,
+
                 "razorpay_order_id":
                     razorpay_order["id"],
 
@@ -166,11 +220,20 @@ class BillingService:
 
                 "currency":
                     razorpay_order["currency"],
+
+                "razorpay_key":
+                    client.auth[0]
+                    if False
+                    else None,
+
             },
         }
 
+
     # ============================================================
-    # VERIFY PAYMENT + AUTO WAYBILL
+    # VERIFY RAZORPAY PAYMENT
+    #
+    # THIS IS THE ONLY PLACE WHERE PAYMENT BECOMES PAID.
     # ============================================================
 
     @staticmethod
@@ -181,38 +244,12 @@ class BillingService:
     ):
 
         # ========================================================
-        # 1. VERIFY RAZORPAY SIGNATURE
-        # ========================================================
-
-        try:
-
-            client.utility.verify_payment_signature(
-                {
-                    "razorpay_order_id":
-                        payload.razorpay_order_id,
-
-                    "razorpay_payment_id":
-                        payload.razorpay_payment_id,
-
-                    "razorpay_signature":
-                        payload.razorpay_signature,
-                }
-            )
-
-        except SignatureVerificationError:
-
-            raise HTTPException(
-                status_code=400,
-                detail="Invalid payment signature",
-            )
-
-        # ========================================================
-        # 2. GET ORDER
+        # 1. GET ORDER
         # ========================================================
 
         order = await BillRepository.get_order(
-            db,
-            payload.order_id,
+            db=db,
+            order_id=payload.order_id,
         )
 
         if not order:
@@ -222,19 +259,18 @@ class BillingService:
                 detail="Order not found",
             )
 
-        # ========================================================
-        # IMPORTANT:
-        # Store the ID before commit / rollback.
-        #
-        # This prevents MissingGreenlet when the ORM object
-        # becomes expired after rollback.
-        # ========================================================
+        # --------------------------------------------------------
+        # SAVE PLAIN ID
+        # --------------------------------------------------------
 
         order_id = order.id
-        order_id_str = str(order_id)
+
+        order_id_str = str(
+            order_id
+        )
 
         # ========================================================
-        # 3. VERIFY OWNERSHIP
+        # 2. VERIFY OWNER
         # ========================================================
 
         if str(order.user_id) != str(user_id):
@@ -245,14 +281,50 @@ class BillingService:
             )
 
         # ========================================================
-        # 4. GET PAYMENT
+        # 3. VERIFY RAZORPAY SIGNATURE
+        # ========================================================
+
+        try:
+
+            client.utility.verify_payment_signature({
+
+                "razorpay_order_id":
+                    payload.razorpay_order_id,
+
+                "razorpay_payment_id":
+                    payload.razorpay_payment_id,
+
+                "razorpay_signature":
+                    payload.razorpay_signature,
+
+            })
+
+        except SignatureVerificationError:
+
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid payment signature",
+            )
+
+        except Exception:
+
+            logger.exception(
+                "Razorpay signature verification failed"
+            )
+
+            raise HTTPException(
+                status_code=400,
+                detail="Unable to verify payment",
+            )
+
+        # ========================================================
+        # 4. GET PAYMENT WITH LOCK
         # ========================================================
 
         payment = (
-            await BillRepository
-            .get_payment_by_order(
-                db,
-                payload.order_id,
+            await BillRepository.get_payment_for_update(
+                db=db,
+                order_id=order_id,
             )
         )
 
@@ -260,98 +332,48 @@ class BillingService:
 
             raise HTTPException(
                 status_code=404,
-                detail="Payment not found",
+                detail="Payment record not found",
             )
 
         # ========================================================
-        # 5. UPDATE PAYMENT
+        # 5. VERIFY RAZORPAY ORDER ID
         # ========================================================
 
-        if payment.status != PaymentStatus.PAID:
-
-            payment.status = (
-                PaymentStatus.PAID
-            )
-
-            payment.gateway_transaction_id = (
-                payload.razorpay_payment_id
-            )
-
-            payment.gateway_order_id = (
-                payload.razorpay_order_id
-            )
-
-            payment.payment_response_data = {
-
-                "razorpay_payment_id":
-                    payload.razorpay_payment_id,
-
-                "razorpay_order_id":
-                    payload.razorpay_order_id,
-
-                "razorpay_signature":
-                    payload.razorpay_signature,
-            }
-
-            payment.paid_at = (
-                datetime.utcnow()
-            )
-
-        # ========================================================
-        # 6. UPDATE ORDER
-        # ========================================================
-
-        order.payment_status = (
-            PaymentStatus.PAID
-        )
-
-        if order.status not in (
-            OrderStatus.PACKED,
-            OrderStatus.SHIPPED,
-            OrderStatus.OUT_FOR_DELIVERY,
-            OrderStatus.DELIVERED,
+        if (
+            payment.gateway_order_id
+            !=
+            payload.razorpay_order_id
         ):
 
-            order.status = (
-                OrderStatus.CONFIRMED
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Razorpay order ID does not match "
+                    "the payment record"
+                ),
             )
-        await db.commit()
-        
-        await CartService.clear_cart(
-            db=db,
-            user_id=user_id
-        )
 
         # ========================================================
-        # 7. COMMIT PAYMENT FIRST
+        # 6. IDEMPOTENCY
         # ========================================================
 
-     
+        if (
+            payment.status
+            == PaymentStatus.PAID
+        ):
 
-        # ========================================================
-        # 8. RELOAD COMPLETE ORDER
-        # ========================================================
-
-        order = (
-            await OrderRepository
-            .get_order_by_id(
-                db,
-                order_id,
-            )
-        )
-
-        if not order:
+            await db.rollback()
 
             return {
 
-                "success": True,
+                "success":
+                    True,
 
-                "status_code": 200,
+                "status_code":
+                    200,
 
-                "message": (
-                    "Payment successful. "
-                    "Waybill generation pending."
-                ),
+                "message":
+                    "Payment already verified",
 
                 "data": {
 
@@ -361,26 +383,302 @@ class BillingService:
                     "payment_status":
                         "PAID",
 
-                    "waybill_generated":
-                        False,
                 },
             }
 
         # ========================================================
-        # 9. CHECK ADDRESS
+        # 7. LOCK ALL VARIANTS
+        # ========================================================
+
+        locked_variants = {}
+
+        try:
+
+            for item in order.items:
+
+                if not item.variant_id:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Variant missing for "
+                            f"order item "
+                            f"'{item.product_name}'"
+                        ),
+                    )
+
+                result = await db.execute(
+
+                    select(
+                        ProductVariant
+                    )
+
+                    .where(
+                        ProductVariant.id
+                        ==
+                        item.variant_id
+                    )
+
+                    .with_for_update()
+
+                )
+
+                variant = (
+                    result.scalar_one_or_none()
+                )
+
+                if not variant:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Variant not found for "
+                            f"'{item.product_name}'"
+                        ),
+                    )
+
+                # ------------------------------------------------
+                # ACTIVE CHECK
+                # ------------------------------------------------
+
+                if not variant.is_active:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Variant for "
+                            f"'{item.product_name}' "
+                            f"is no longer available"
+                        ),
+                    )
+
+                # ------------------------------------------------
+                # AVAILABLE STOCK
+                # ------------------------------------------------
+
+                reserved_qty = (
+                    variant.reserved_qty or 0
+                )
+
+                stock_qty = (
+                    variant.stock_qty or 0
+                )
+
+                available_stock = (
+                    stock_qty
+                    -
+                    reserved_qty
+                )
+
+                if (
+                    available_stock
+                    <
+                    item.quantity
+                ):
+
+                    size_color = []
+
+                    if variant.size:
+
+                        size_color.append(
+                            f"Size: {variant.size}"
+                        )
+
+                    if variant.color:
+
+                        size_color.append(
+                            f"Color: {variant.color}"
+                        )
+
+                    variant_text = ""
+
+                    if size_color:
+
+                        variant_text = (
+                            " ("
+                            +
+                            ", ".join(
+                                size_color
+                            )
+                            +
+                            ")"
+                        )
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Insufficient stock for "
+                            f"'{item.product_name}'"
+                            f"{variant_text}. "
+                            f"Only "
+                            f"{available_stock} "
+                            f"available."
+                        ),
+                    )
+
+                locked_variants[
+                    item.variant_id
+                ] = variant
+
+            # ====================================================
+            # 8. DECREASE VARIANT STOCK
+            # ====================================================
+
+            for item in order.items:
+
+                variant = (
+                    locked_variants[
+                        item.variant_id
+                    ]
+                )
+
+                variant.stock_qty = (
+                    variant.stock_qty
+                    -
+                    item.quantity
+                )
+
+            # ====================================================
+            # 9. UPDATE PAYMENT
+            # ====================================================
+
+            payment.status = (
+                PaymentStatus.PAID
+            )
+
+            payment.gateway_order_id = (
+                payload.razorpay_order_id
+            )
+
+            payment.gateway_transaction_id = (
+                payload.razorpay_payment_id
+            )
+
+            payment.payment_response_data = {
+
+                "razorpay_order_id":
+                    payload.razorpay_order_id,
+
+                "razorpay_payment_id":
+                    payload.razorpay_payment_id,
+
+                "razorpay_signature":
+                    payload.razorpay_signature,
+
+            }
+
+            payment.paid_at = (
+                datetime.now(
+                    timezone.utc
+                )
+            )
+
+            # ====================================================
+            # 10. UPDATE ORDER
+            # ====================================================
+
+            order.payment_status = (
+                PaymentStatus.PAID
+            )
+
+            order.status = (
+                OrderStatus.CONFIRMED
+            )
+
+            # ====================================================
+            # 11. CLEAR CART
+            # ====================================================
+
+            cart_items = (
+                await CartRepository.get_all_cart_items(
+                    db=db,
+                    user_id=user_id,
+                )
+            )
+
+            for cart_item in cart_items:
+
+                await db.delete(
+                    cart_item
+                )
+
+            # ====================================================
+            # 12. COMMIT PAYMENT + STOCK + CART
+            # ====================================================
+
+            await db.commit()
+
+        except HTTPException:
+
+            await db.rollback()
+
+            raise
+
+        except Exception:
+
+            await db.rollback()
+
+            logger.exception(
+                "Payment processing failed"
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Payment processing failed"
+                ),
+            )
+
+        # ========================================================
+        # 13. RELOAD ORDER
+        # ========================================================
+
+        order = await BillRepository.get_order(
+            db=db,
+            order_id=order_id,
+        )
+
+        if not order:
+
+            return {
+
+                "success":
+                    True,
+
+                "status_code":
+                    200,
+
+                "message":
+                    "Payment successful",
+
+                "data": {
+
+                    "order_id":
+                        order_id_str,
+
+                    "payment_status":
+                        "PAID",
+
+                },
+            }
+
+        # ========================================================
+        # 14. CHECK ADDRESS
         # ========================================================
 
         if not order.address:
 
             return {
 
-                "success": True,
+                "success":
+                    True,
 
-                "status_code": 200,
+                "status_code":
+                    200,
 
                 "message": (
                     "Payment successful, "
-                    "but delivery address is missing."
+                    "but delivery address is missing"
                 ),
 
                 "data": {
@@ -399,31 +697,34 @@ class BillingService:
 
                     "waybill_error":
                         "Delivery address is missing",
+
                 },
             }
 
         # ========================================================
-        # 10. CHECK EXISTING SHIPMENT
+        # 15. CHECK EXISTING SHIPMENT
         # ========================================================
 
         existing_shipment = (
-            await ShipmentRepository
-            .get_by_order_id(
-                db,
-                order_id,
+            await ShipmentRepository.get_by_order_id(
+                db=db,
+                order_id=order_id,
             )
         )
 
         if (
             existing_shipment
-            and existing_shipment.tracking_number
+            and
+            existing_shipment.tracking_number
         ):
 
             return {
 
-                "success": True,
+                "success":
+                    True,
 
-                "status_code": 200,
+                "status_code":
+                    200,
 
                 "message": (
                     "Payment successful. "
@@ -457,23 +758,28 @@ class BillingService:
 
                     "courier":
                         existing_shipment.courier_name,
+
                 },
             }
 
         # ========================================================
-        # 11. GENERATE WAYBILL
+        # 16. GENERATE BLUE DART WAYBILL
         # ========================================================
 
         try:
 
             # ----------------------------------------------------
-            # GET STORE / WAREHOUSE SETTINGS
+            # STORE SETTINGS
             # ----------------------------------------------------
 
             store_result = await db.execute(
+
                 select(
                     StoreSetting
-                ).limit(1)
+                )
+
+                .limit(1)
+
             )
 
             store_setting = (
@@ -482,21 +788,24 @@ class BillingService:
             )
 
             # ----------------------------------------------------
-            # CALL BLUE DART
+            # BLUE DART
             # ----------------------------------------------------
 
             waybill_data = (
-                await BlueDartService
-                .generate_waybill(
+                await BlueDartService.generate_waybill(
+
                     order=order,
+
                     address=order.address,
+
                     store_setting=store_setting,
+
                 )
             )
 
-            # ====================================================
-            # 12. GET AWB
-            # ====================================================
+            # ----------------------------------------------------
+            # AWB
+            # ----------------------------------------------------
 
             awb_number = (
                 waybill_data.get(
@@ -511,24 +820,7 @@ class BillingService:
                 )
 
             # ====================================================
-            # 13. CREATE SHIPMENT OBJECT
-            # ====================================================
-            #
-            # IMPORTANT:
-            #
-            # ShipmentRepository.create_shipment()
-            # expects:
-            #
-            #     db
-            #     shipment: Shipment
-            #
-            # NOT:
-            #
-            #     order_id
-            #     tracking_number
-            #     courier_name
-            #
-            # So we create the Shipment model here.
+            # 17. CREATE SHIPMENT
             # ====================================================
 
             shipment = Shipment(
@@ -572,22 +864,25 @@ class BillingService:
                         "mps_details"
                     )
                 ),
+
             )
 
             # ====================================================
-            # SAVE SHIPMENT
+            # 18. SAVE SHIPMENT
             # ====================================================
 
             shipment = (
-                await ShipmentRepository
-                .create_shipment(
+                await ShipmentRepository.create_shipment(
+
                     db=db,
+
                     shipment=shipment,
+
                 )
             )
 
             # ====================================================
-            # 14. EXTRA SHIPPING DATA
+            # OPTIONAL SHIPPING FIELDS
             # ====================================================
 
             optional_fields = {
@@ -615,6 +910,7 @@ class BillingService:
 
                 "pack_type":
                     "pack_type",
+
             }
 
             for (
@@ -628,30 +924,26 @@ class BillingService:
                 ):
 
                     setattr(
+
                         shipment,
+
                         model_field,
+
                         waybill_data.get(
                             response_field
                         ),
+
                     )
 
             # ====================================================
-            # 15. ORDER = PACKED
+            # 19. ORDER PACKED
             # ====================================================
 
             order.status = (
                 OrderStatus.PACKED
             )
 
-            # ====================================================
-            # 16. FINAL COMMIT
-            # ====================================================
-
             await db.commit()
-
-            # ====================================================
-            # 17. REFRESH
-            # ====================================================
 
             await db.refresh(
                 order
@@ -662,7 +954,7 @@ class BillingService:
             )
 
             # ====================================================
-            # 18. SUCCESS RESPONSE
+            # 20. RESPONSE
             # ====================================================
 
             return {
@@ -682,17 +974,6 @@ class BillingService:
 
                     "order_id":
                         order_id_str,
-
-                    "payment_id":
-                        str(
-                            payment.id
-                        ),
-
-                    "razorpay_order_id":
-                        payload.razorpay_order_id,
-
-                    "razorpay_payment_id":
-                        payload.razorpay_payment_id,
 
                     "payment_status":
                         "PAID",
@@ -737,63 +1018,29 @@ class BillingService:
                             "destination_location"
                         ),
 
-                    "actual_weight":
-                        waybill_data.get(
-                            "actual_weight"
-                        ),
-
-                    "length":
-                        waybill_data.get(
-                            "length"
-                        ),
-
-                    "breadth":
-                        waybill_data.get(
-                            "breadth"
-                        ),
-
-                    "height":
-                        waybill_data.get(
-                            "height"
-                        ),
-
-                    "piece_count":
-                        waybill_data.get(
-                            "piece_count"
-                        ),
                 },
-            }
 
-        # ========================================================
-        # BLUE DART / SHIPMENT FAILURE
-        # ========================================================
+            }
 
         except Exception as exc:
 
             # ----------------------------------------------------
-            # IMPORTANT:
+            # IMPORTANT
             #
-            # Payment was already committed above.
+            # Payment is already committed.
             #
-            # Therefore rollback only affects the current
-            # Blue Dart / shipment transaction.
+            # We DO NOT rollback payment/stock.
+            #
+            # Only shipment generation failed.
             # ----------------------------------------------------
 
             await db.rollback()
 
-            # ----------------------------------------------------
-            # IMPORTANT:
-            #
-            # DO NOT access:
-            #
-            #     order.id
-            #     order.status
-            #     order.address
-            #
-            # after rollback.
-            #
-            # Use the plain Python order_id_str.
-            # ----------------------------------------------------
+            logger.exception(
+                "Blue Dart waybill generation failed "
+                "for order %s",
+                order_id_str,
+            )
 
             return {
 
@@ -825,5 +1072,7 @@ class BillingService:
 
                     "waybill_error":
                         str(exc),
+
                 },
+
             }

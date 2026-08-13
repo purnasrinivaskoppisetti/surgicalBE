@@ -5,6 +5,8 @@ from sqlalchemy import (
     or_,
 )
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy.orm import joinedload
 
 from app.models.models import (
@@ -13,6 +15,7 @@ from app.models.models import (
     Order,
     OrderItem,
     Product,
+    ProductVariant,
     User,
     OrderStatus,
     PaymentStatus,
@@ -28,10 +31,9 @@ class OrderRepository:
 
     @staticmethod
     async def get_coupon_by_code(
-        db,
+        db: AsyncSession,
         code: str,
     ):
-
         result = await db.execute(
             select(Coupon).where(
                 Coupon.code == code,
@@ -47,9 +49,8 @@ class OrderRepository:
 
     @staticmethod
     async def get_store_settings(
-        db,
+        db: AsyncSession,
     ):
-
         result = await db.execute(
             select(StoreSetting)
         )
@@ -62,10 +63,9 @@ class OrderRepository:
 
     @staticmethod
     async def create_order(
-        db,
+        db: AsyncSession,
         order: Order,
     ):
-
         db.add(order)
 
         await db.flush()
@@ -78,10 +78,9 @@ class OrderRepository:
 
     @staticmethod
     async def create_order_item(
-        db,
+        db: AsyncSession,
         order_item: OrderItem,
     ):
-
         db.add(order_item)
 
         await db.flush()
@@ -89,27 +88,24 @@ class OrderRepository:
         return order_item
 
     # ============================================================
-    # GET SINGLE ORDER
+    # GET ORDER BY ID
     #
-    # Loads everything required by:
-    #
-    # - Admin order details
-    # - Customer order details
-    # - Billing
-    # - Blue Dart
-    # - Tracking
-    #
-    # NOTE:
-    # Order.status_history is NOT loaded here because the
-    # Order model does not define that relationship.
-    #
-    # Status history is fetched separately using
-    # get_order_status_history().
+    # Loads:
+    # - User
+    # - Order items
+    # - Product
+    # - Product category
+    # - Product images
+    # - Product variant
+    # - Address
+    # - Payments
+    # - Shipments
+    # - Coupon
     # ============================================================
 
     @staticmethod
     async def get_order_by_id(
-        db,
+        db: AsyncSession,
         order_id,
     ):
 
@@ -128,9 +124,7 @@ class OrderRepository:
                 ),
 
                 # ------------------------------------------------
-                # ORDER ITEMS
-                # PRODUCT
-                # CATEGORY
+                # ORDER ITEMS → PRODUCT
                 # ------------------------------------------------
 
                 joinedload(
@@ -144,69 +138,7 @@ class OrderRepository:
                 ),
 
                 # ------------------------------------------------
-                # ADDRESS
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.address
-                ),
-
-                # ------------------------------------------------
-                # PAYMENTS
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.payments
-                ),
-
-                # ------------------------------------------------
-                # SHIPMENTS
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.shipments
-                ),
-
-            )
-
-            .where(
-                Order.id == order_id
-            )
-        )
-
-        return (
-            result
-            .unique()
-            .scalar_one_or_none()
-        )
-
-    # ============================================================
-    # GET CUSTOMER ORDER
-    # ============================================================
-
-    @staticmethod
-    async def get_customer_order(
-        db,
-        order_id,
-        user_id,
-    ):
-
-        result = await db.execute(
-
-            select(Order)
-
-            .options(
-
-                # ------------------------------------------------
-                # USER
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.user
-                ),
-
-                # ------------------------------------------------
-                # ITEMS
+                # ORDER ITEMS → PRODUCT IMAGES
                 # ------------------------------------------------
 
                 joinedload(
@@ -216,83 +148,18 @@ class OrderRepository:
                     OrderItem.product
                 )
                 .joinedload(
-                    Product.category
+                    Product.images
                 ),
 
                 # ------------------------------------------------
-                # ADDRESS
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.address
-                ),
-
-                # ------------------------------------------------
-                # PAYMENTS
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.payments
-                ),
-
-                # ------------------------------------------------
-                # SHIPMENTS
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.shipments
-                ),
-
-            )
-
-            .where(
-                Order.id == order_id,
-                Order.user_id == user_id,
-            )
-        )
-
-        return (
-            result
-            .unique()
-            .scalar_one_or_none()
-        )
-
-    # ============================================================
-    # GET ALL CUSTOMER ORDERS
-    # ============================================================
-
-    @staticmethod
-    async def get_orders_by_user(
-        db,
-        user_id,
-    ):
-
-        result = await db.execute(
-
-            select(Order)
-
-            .options(
-
-                # ------------------------------------------------
-                # USER
-                # ------------------------------------------------
-
-                joinedload(
-                    Order.user
-                ),
-
-                # ------------------------------------------------
-                # ITEMS
+                # ORDER ITEMS → VARIANT
                 # ------------------------------------------------
 
                 joinedload(
                     Order.items
                 )
                 .joinedload(
-                    OrderItem.product
-                )
-                .joinedload(
-                    Product.category
+                    OrderItem.variant
                 ),
 
                 # ------------------------------------------------
@@ -326,7 +193,230 @@ class OrderRepository:
                 joinedload(
                     Order.coupon
                 ),
+            )
 
+            .where(
+                Order.id == order_id
+            )
+        )
+
+        return (
+            result
+            .unique()
+            .scalar_one_or_none()
+        )
+
+    # ============================================================
+    # GET CUSTOMER ORDER
+    #
+    # IMPORTANT:
+    # Checks both:
+    #
+    # order_id
+    # user_id
+    #
+    # So a customer cannot access another customer's order.
+    # ============================================================
+
+    @staticmethod
+    async def get_customer_order(
+        db: AsyncSession,
+        order_id,
+        user_id,
+    ):
+
+        result = await db.execute(
+
+            select(Order)
+
+            .options(
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.user
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → PRODUCT → CATEGORY
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                )
+                .joinedload(
+                    Product.category
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → PRODUCT IMAGES
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                )
+                .joinedload(
+                    Product.images
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → VARIANT
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.variant
+                ),
+
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.address
+                ),
+
+                # ------------------------------------------------
+                # PAYMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.payments
+                ),
+
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.shipments
+                ),
+
+                # ------------------------------------------------
+                # COUPON
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.coupon
+                ),
+            )
+
+            .where(
+                Order.id == order_id,
+                Order.user_id == user_id,
+            )
+        )
+
+        return (
+            result
+            .unique()
+            .scalar_one_or_none()
+        )
+
+    # ============================================================
+    # GET ALL CUSTOMER ORDERS
+    # ============================================================
+
+    @staticmethod
+    async def get_orders_by_user(
+        db: AsyncSession,
+        user_id,
+    ):
+
+        result = await db.execute(
+
+            select(Order)
+
+            .options(
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.user
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → PRODUCT → CATEGORY
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                )
+                .joinedload(
+                    Product.category
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → PRODUCT IMAGES
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                )
+                .joinedload(
+                    Product.images
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → VARIANT
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.variant
+                ),
+
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.address
+                ),
+
+                # ------------------------------------------------
+                # PAYMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.payments
+                ),
+
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.shipments
+                ),
+
+                # ------------------------------------------------
+                # COUPON
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.coupon
+                ),
             )
 
             .where(
@@ -348,22 +438,19 @@ class OrderRepository:
     # ============================================================
     # GET ORDERS FOR ADMIN
     #
-    # DEFAULT:
-    # ONLY PAID ORDERS
+    # Default:
+    # Only PAID orders
     #
-    # Includes:
-    # - User
-    # - Address
-    # - Products
-    # - Payments
-    # - Shipments
-    #
-    # Status history is fetched separately.
+    # Supports:
+    # - pagination
+    # - search
+    # - order status
+    # - payment status
     # ============================================================
 
     @staticmethod
     async def get_orders(
-        db,
+        db: AsyncSession,
         page: int,
         page_size: int,
         search=None,
@@ -373,9 +460,9 @@ class OrderRepository:
 
         conditions = []
 
-        # --------------------------------------------------------
+        # ========================================================
         # PAYMENT STATUS
-        # --------------------------------------------------------
+        # ========================================================
 
         if payment_status:
 
@@ -391,9 +478,9 @@ class OrderRepository:
                 == PaymentStatus.PAID
             )
 
-        # --------------------------------------------------------
+        # ========================================================
         # ORDER STATUS
-        # --------------------------------------------------------
+        # ========================================================
 
         if status:
 
@@ -402,9 +489,9 @@ class OrderRepository:
                 == status
             )
 
-        # --------------------------------------------------------
+        # ========================================================
         # SEARCH
-        # --------------------------------------------------------
+        # ========================================================
 
         if search:
 
@@ -447,7 +534,6 @@ class OrderRepository:
             .where(
                 *conditions
             )
-
         )
 
         total = await db.scalar(
@@ -499,6 +585,31 @@ class OrderRepository:
                 ),
 
                 # ------------------------------------------------
+                # ITEMS → PRODUCT IMAGES
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                )
+                .joinedload(
+                    Product.images
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → VARIANT
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.variant
+                ),
+
+                # ------------------------------------------------
                 # PAYMENTS
                 # ------------------------------------------------
 
@@ -514,6 +625,13 @@ class OrderRepository:
                     Order.shipments
                 ),
 
+                # ------------------------------------------------
+                # COUPON
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.coupon
+                ),
             )
 
             .where(
@@ -525,14 +643,12 @@ class OrderRepository:
             )
 
             .offset(
-                (page - 1)
-                * page_size
+                (page - 1) * page_size
             )
 
             .limit(
                 page_size
             )
-
         )
 
         result = await db.execute(
@@ -554,14 +670,13 @@ class OrderRepository:
     # ============================================================
     # GET ORDER STATUS HISTORY
     #
-    # Order.status_history relationship is NOT required.
-    #
-    # This directly queries OrderStatusHistory using order_id.
+    # We query directly instead of using
+    # Order.status_history relationship.
     # ============================================================
 
     @staticmethod
     async def get_order_status_history(
-        db,
+        db: AsyncSession,
         order_id,
     ):
 
@@ -579,7 +694,6 @@ class OrderRepository:
             .order_by(
                 OrderStatusHistory.created_at.desc()
             )
-
         )
 
         return list(
@@ -592,7 +706,7 @@ class OrderRepository:
 
     @staticmethod
     async def update_order_status(
-        db,
+        db: AsyncSession,
         order_id,
         status,
     ):
@@ -606,6 +720,7 @@ class OrderRepository:
         )
 
         if not order:
+
             return None
 
         order.status = status
@@ -624,7 +739,7 @@ class OrderRepository:
 
     @staticmethod
     async def update_payment_status(
-        db,
+        db: AsyncSession,
         order_id,
         payment_status,
     ):
@@ -638,6 +753,7 @@ class OrderRepository:
         )
 
         if not order:
+
             return None
 
         order.payment_status = (
@@ -654,11 +770,15 @@ class OrderRepository:
 
     # ============================================================
     # CANCEL ORDER
+    #
+    # NOTE:
+    # Actual variant stock restoration is handled in
+    # OrderService because it needs transaction/locking logic.
     # ============================================================
 
     @staticmethod
     async def cancel_order(
-        db,
+        db: AsyncSession,
         order_id,
         reason,
     ):
@@ -672,6 +792,7 @@ class OrderRepository:
         )
 
         if not order:
+
             return None
 
         order.status = (
@@ -696,7 +817,7 @@ class OrderRepository:
 
     @staticmethod
     async def get_order_summary(
-        db,
+        db: AsyncSession,
     ):
 
         result = await db.execute(
@@ -738,7 +859,8 @@ class OrderRepository:
 
                             (
                                 Order.status
-                                == OrderStatus.PENDING,
+                                ==
+                                OrderStatus.PENDING,
 
                                 1,
                             ),
@@ -801,7 +923,8 @@ class OrderRepository:
                             (
 
                                 Order.status
-                                == OrderStatus.DELIVERED,
+                                ==
+                                OrderStatus.DELIVERED,
 
                                 1,
 
@@ -832,7 +955,8 @@ class OrderRepository:
                             (
 
                                 Order.status
-                                == OrderStatus.CANCELLED,
+                                ==
+                                OrderStatus.CANCELLED,
 
                                 1,
 
@@ -854,9 +978,9 @@ class OrderRepository:
 
             .where(
                 Order.payment_status
-                == PaymentStatus.PAID
+                ==
+                PaymentStatus.PAID
             )
-
         )
 
         return (
@@ -868,7 +992,7 @@ class OrderRepository:
     # ============================================================
     # GET ORDERS FOR TRACKING
     #
-    # Used for Blue Dart tracking synchronization.
+    # Used by Blue Dart synchronization.
     #
     # Gets:
     # - Paid orders
@@ -876,11 +1000,13 @@ class OrderRepository:
     # - Not cancelled
     # - Shipments
     # - User
+    # - Items
+    # - Variants
     # ============================================================
 
     @staticmethod
     async def get_orders_for_tracking(
-        db,
+        db: AsyncSession,
     ):
 
         result = await db.execute(
@@ -905,21 +1031,52 @@ class OrderRepository:
                     Order.user
                 ),
 
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.address
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → PRODUCT
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                ),
+
+                # ------------------------------------------------
+                # ITEMS → VARIANT
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.variant
+                ),
             )
 
             .where(
 
                 Order.payment_status
-                == PaymentStatus.PAID,
+                ==
+                PaymentStatus.PAID,
 
                 Order.status
-                != OrderStatus.DELIVERED,
+                !=
+                OrderStatus.DELIVERED,
 
                 Order.status
-                != OrderStatus.CANCELLED,
+                !=
+                OrderStatus.CANCELLED,
 
             )
-
         )
 
         return (

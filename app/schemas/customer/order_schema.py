@@ -1,9 +1,13 @@
 from uuid import UUID
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from app.models.models import PaymentMethod
 
+
+# ============================================================
+# CREATE ORDER
+# ============================================================
 
 class CreateOrderRequest(BaseModel):
 
@@ -14,13 +18,26 @@ class CreateOrderRequest(BaseModel):
     coupon_code: str | None = None
 
 
+# ============================================================
+# PAYMENT SUCCESS
+# ============================================================
+
 class PaymentSuccessRequest(BaseModel):
 
     order_id: UUID
 
-    transaction_id: str
+    transaction_id: str = Field(
+        min_length=1
+    )
 
+
+# ============================================================
+# CANCEL ORDER
+# ============================================================
 
 class CancelOrderRequest(BaseModel):
 
-    reason: str
+    reason: str = Field(
+        min_length=1,
+        max_length=500
+    )

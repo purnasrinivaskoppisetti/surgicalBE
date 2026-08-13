@@ -1,238 +1,995 @@
 import uuid
-from decimal import Decimal
 import logging
+
+from decimal import Decimal
+
+from sqlalchemy import select
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from sqlalchemy.exc import SQLAlchemyError
+
+from fastapi import HTTPException
 
 from app.models.models import (
     Order,
     OrderItem,
     CouponUsage,
     Payment,
+    Shipment,
+    ProductVariant,
     OrderStatus,
     PaymentStatus,
-    Shipment
 )
-from app.repositories.cart_repository import CartRepository
-from app.repositories.order_repository import OrderRepository
-from app.repositories.coupon_repository import CouponRepository
-from app.repositories.setting_repository import SettingRepository
-from app.services.bluedart_service import BlueDartService
+
+from app.repositories.cart_repository import (
+    CartRepository
+)
+
+from app.repositories.order_repository import (
+    OrderRepository
+)
+
+from app.repositories.coupon_repository import (
+    CouponRepository
+)
+
+from app.repositories.setting_repository import (
+    SettingRepository
+)
+
+from app.services.bluedart_service import (
+    BlueDartService
+)
+
 
 logger = logging.getLogger(__name__)
 
 
 class OrderService:
 
-    @staticmethod
-    async def create_order(db, user_id, payload):
-        cart_items = await CartRepository.get_all_cart_items(db, user_id)
-
-        if not cart_items:
-            return {
-                "success": False,
-                "status_code": 400,
-                "message": "Cart is empty"
-            }
-
-        # --- Stock Pre-Check ---
-        for item in cart_items:
-            if item.product.stock_qty < item.quantity:
-                return {
-                    "success": False,
-                    "status_code": 400,
-                    "message": f"Insufficient stock for '{item.product.name}'"
-                }
-
-        subtotal = Decimal("0")
-        for item in cart_items:
-            subtotal += item.product.sale_price * item.quantity
-
-        settings = await SettingRepository.get_settings(db)
-        shipping_charge = Decimal("0")
-
-        if settings and subtotal < settings.free_shipping_threshold:
-            shipping_charge = settings.delivery_charge
-
-        discount = Decimal("0")
-        coupon = None
-
-        if payload.coupon_code:
-            coupon = await CouponRepository.get_coupon_by_code(db, payload.coupon_code)
-            if coupon:
-                if coupon.coupon_type.value == "flat":
-                    discount = coupon.discount_value
-                elif coupon.coupon_type.value == "percentage":
-                    discount = (subtotal * coupon.discount_value) / Decimal("100")
-
-        total_amount = max(Decimal("0"), subtotal + shipping_charge - discount)
-
-        order = Order(
-            order_number=f"SW-{uuid.uuid4().hex[:10].upper()}",
-            user_id=user_id,
-            address_id=payload.address_id,
-            coupon_id=coupon.id if coupon else None,
-            coupon_code=coupon.code if coupon else None,
-            subtotal=subtotal,
-            gst_amount=Decimal("0"),
-            shipping_charge=shipping_charge,
-            discount=discount,
-            total_amount=total_amount,
-            status=OrderStatus.PENDING,
-            payment_status=PaymentStatus.PENDING
-        )
-
-        await OrderRepository.create_order(db, order)
-
-        for item in cart_items:
-            order_item = OrderItem(
-                order_id=order.id,
-                product_id=item.product.id,
-                product_name=item.product.name,
-                product_sku=item.product.sku,
-                quantity=item.quantity,
-                price=item.product.sale_price,
-                gst_amount=Decimal("0"),
-                total=item.product.sale_price * item.quantity
-            )
-            await OrderRepository.create_order_item(db, order_item)
-
-        payment = Payment(
-            order_id=order.id,
-            payment_method=payload.payment_method,
-            amount=total_amount,
-            status=PaymentStatus.PENDING
-        )
-
-        db.add(payment)
-        await db.commit()
-
-        return {
-            "success": True,
-            "status_code": 201,
-            "message": "Order created. Complete payment.",
-            "data": {
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "amount": float(total_amount)
-            }
-        }
+    # ============================================================
+    # HELPER
+    # GET VARIANT PRICE
+    # ============================================================
 
     @staticmethod
-    async def payment_success(db, user_id, payload):
-        order = await OrderRepository.get_order_by_id(db, payload.order_id)
+    def _get_variant_price(
+        product,
+        variant
+    ):
 
-        if not order:
-            return {
-                "success": False,
-                "status_code": 404,
-                "message": "Order not found"
-            }
+        mrp = (
+            variant.mrp
+            if variant.mrp is not None
+            else product.mrp
+        )
 
-        if order.payment_status == PaymentStatus.PAID:
-            return {
-                "success": False,
-                "status_code": 400,
-                "message": "Payment already completed"
-            }
+        sale_price = (
+            variant.sale_price
+            if variant.sale_price is not None
+            else product.sale_price
+        )
 
-        # Validate stock BEFORE mutating state
-        for item in order.items:
-            product = item.product
-            if not product or product.stock_qty < item.quantity:
-                await db.rollback()
-                return {
-                    "success": False,
-                    "status_code": 400,
-                    "message": f"Stock unavailable for item '{item.product_name}'"
-                }
+        return mrp, sale_price
 
-        # Apply state changes after verification succeeds
-        if order.payments:
-            payment = order.payments[0]
-            payment.status = PaymentStatus.PAID
-            payment.gateway_transaction_id = payload.transaction_id
+    # ============================================================
+    # HELPER
+    # GET AVAILABLE STOCK
+    # ============================================================
 
-        order.payment_status = PaymentStatus.PAID
-        order.status = OrderStatus.CONFIRMED
+    @staticmethod
+    def _get_available_stock(
+        variant
+    ):
 
-        # Reduce stock
-        for item in order.items:
-            item.product.stock_qty -= item.quantity
+        return max(
+            0,
+            variant.stock_qty
+            -
+            variant.reserved_qty
+        )
 
-        # Record Coupon usage
-        if order.coupon_id:
-            coupon_usage = CouponUsage(
-                coupon_id=order.coupon_id,
-                user_id=user_id,
-                order_id=order.id,
-                discount_amount=order.discount
-            )
-            db.add(coupon_usage)
-            if order.coupon:
-                order.coupon.used_count += 1
+    # ============================================================
+    # CREATE ORDER
+    # ============================================================
 
-        # Clear cart items for the user
-        cart_items = await CartRepository.get_all_cart_items(db, user_id)
-        for item in cart_items:
-            await db.delete(item)
+    @staticmethod
+    async def create_order(
+        db: AsyncSession,
+        user_id,
+        payload
+    ):
 
-        await db.commit()
-        await db.refresh(order)
-
-        # =========================================================================
-        # AUTOMATIC BLUE DART WAYBILL GENERATION (POST-PAYMENT)
-        # =========================================================================
-        waybill_info = None
         try:
-            if order.address:
-                waybill_res = await BlueDartService.generate_waybill(
-                    order,
-                    order.address
-                )
-                
-                # Save generated shipment record in database
-                shipment = Shipment(
-                    id=uuid.uuid4(),
-                    order_id=order.id,
-                    courier_name="Blue Dart",
-                    tracking_number=waybill_res.get("awb_number"),
-                    pickup_token_number=waybill_res.get("pickup_token_number"),
-                    origin_area=waybill_res.get("origin_area"),
-                    destination_area=waybill_res.get("destination_area"),
-                    destination_location=waybill_res.get("destination_location"),
-                    status="MANIFESTED"
-                )
-                db.add(shipment)
-                order.status = OrderStatus.PACKED
-                await db.commit()
-                
-                waybill_info = {
-                    "awb_number": waybill_res.get("awb_number"),
-                    "pickup_token_number": waybill_res.get("pickup_token_number")
-                }
-        except Exception as e:
-            # Log waybill failure so payment remains marked SUCCESS while admin can retry manually
-            logger.error(f"Auto-Waybill Generation Failed for Order {order.order_number}: {str(e)}")
 
-        return {
-            "success": True,
-            "status_code": 200,
-            "message": "Payment successful. Order confirmed and waybill dispatched.",
-            "data": {
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "waybill": waybill_info
+            # ====================================================
+            # GET CART
+            # ====================================================
+
+            cart_items = (
+                await CartRepository.get_all_cart_items(
+                    db=db,
+                    user_id=user_id
+                )
+            )
+
+            if not cart_items:
+
+                return {
+                    "success": False,
+                    "status_code": 400,
+                    "message": "Cart is empty"
+                }
+
+            # ====================================================
+            # STOCK + PRICE VALIDATION
+            # ====================================================
+
+            subtotal = Decimal("0")
+
+            validated_items = []
+
+            for item in cart_items:
+
+                product = item.product
+
+                variant = item.variant
+
+                if not product:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Product not found for cart item"
+                    )
+
+                if not variant:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Variant not found for "
+                            f"product '{product.name}'"
+                        )
+                    )
+
+                if not variant.is_active:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Selected variant for "
+                            f"'{product.name}' is no longer available"
+                        )
+                    )
+
+                # -----------------------------------------------
+                # AVAILABLE STOCK
+                # -----------------------------------------------
+
+                available_stock = (
+                    OrderService._get_available_stock(
+                        variant
+                    )
+                )
+
+                if available_stock < item.quantity:
+
+                    size_color = ""
+
+                    if variant.size:
+                        size_color += (
+                            f"Size: {variant.size}"
+                        )
+
+                    if variant.color:
+
+                        if size_color:
+                            size_color += ", "
+
+                        size_color += (
+                            f"Color: {variant.color}"
+                        )
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Insufficient stock for "
+                            f"'{product.name}'"
+                            f"{' (' + size_color + ')' if size_color else ''}. "
+                            f"Only {available_stock} available."
+                        )
+                    )
+
+                # -----------------------------------------------
+                # PRICE
+                # -----------------------------------------------
+
+                mrp, sale_price = (
+                    OrderService._get_variant_price(
+                        product,
+                        variant
+                    )
+                )
+
+                item_total = (
+                    Decimal(str(sale_price))
+                    *
+                    item.quantity
+                )
+
+                subtotal += item_total
+
+                validated_items.append({
+                    "cart_item": item,
+                    "product": product,
+                    "variant": variant,
+                    "mrp": mrp,
+                    "sale_price": sale_price,
+                    "total": item_total
+                })
+
+            # ====================================================
+            # SHIPPING
+            # ====================================================
+
+            settings = (
+                await SettingRepository.get_settings(
+                    db
+                )
+            )
+
+            shipping_charge = Decimal("0")
+
+            if settings:
+
+                delivery_charge = Decimal(
+                    str(
+                        settings.delivery_charge or 0
+                    )
+                )
+
+                free_shipping_threshold = Decimal(
+                    str(
+                        settings.free_shipping_threshold or 0
+                    )
+                )
+
+                if (
+                    delivery_charge > 0
+                ):
+
+                    if (
+                        free_shipping_threshold > 0
+                        and
+                        subtotal >= free_shipping_threshold
+                    ):
+
+                        shipping_charge = Decimal("0")
+
+                    else:
+
+                        shipping_charge = (
+                            delivery_charge
+                        )
+
+            # ====================================================
+            # COUPON
+            # ====================================================
+
+            discount = Decimal("0")
+
+            coupon = None
+
+            if payload.coupon_code:
+
+                coupon = (
+                    await CouponRepository.get_coupon_by_code(
+                        db,
+                        payload.coupon_code
+                    )
+                )
+
+                if not coupon:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Invalid coupon code"
+                    )
+
+                # -----------------------------------------------
+                # MINIMUM ORDER
+                # -----------------------------------------------
+
+                if (
+                    coupon.minimum_order_amount
+                    and
+                    subtotal
+                    <
+                    coupon.minimum_order_amount
+                ):
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Minimum order amount is "
+                            f"{coupon.minimum_order_amount}"
+                        )
+                    )
+
+                # -----------------------------------------------
+                # USAGE LIMIT
+                # -----------------------------------------------
+
+                if (
+                    coupon.usage_limit
+                    and
+                    coupon.used_count
+                    >=
+                    coupon.usage_limit
+                ):
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Coupon usage limit reached"
+                    )
+
+                # -----------------------------------------------
+                # FLAT
+                # -----------------------------------------------
+
+                if (
+                    coupon.coupon_type.value
+                    ==
+                    "flat"
+                ):
+
+                    discount = (
+                        coupon.discount_value
+                    )
+
+                # -----------------------------------------------
+                # PERCENTAGE
+                # -----------------------------------------------
+
+                elif (
+                    coupon.coupon_type.value
+                    ==
+                    "percentage"
+                ):
+
+                    discount = (
+                        subtotal
+                        *
+                        coupon.discount_value
+                    ) / Decimal("100")
+
+                    if (
+                        coupon.max_discount_amount
+                        and
+                        discount
+                        >
+                        coupon.max_discount_amount
+                    ):
+
+                        discount = (
+                            coupon.max_discount_amount
+                        )
+
+                # -----------------------------------------------
+                # FREE SHIPPING
+                # -----------------------------------------------
+
+                elif (
+                    coupon.coupon_type.value
+                    ==
+                    "free_shipping"
+                ):
+
+                    discount = (
+                        shipping_charge
+                    )
+
+            # ====================================================
+            # PREVENT NEGATIVE TOTAL
+            # ====================================================
+
+            total_amount = max(
+                Decimal("0"),
+                subtotal
+                +
+                shipping_charge
+                -
+                discount
+            )
+
+            # ====================================================
+            # CREATE ORDER
+            # ====================================================
+
+            order = Order(
+
+                order_number=(
+                    f"SW-"
+                    f"{uuid.uuid4().hex[:10].upper()}"
+                ),
+
+                user_id=user_id,
+
+                address_id=payload.address_id,
+
+                coupon_id=(
+                    coupon.id
+                    if coupon
+                    else None
+                ),
+
+                coupon_code=(
+                    coupon.code
+                    if coupon
+                    else None
+                ),
+
+                subtotal=subtotal,
+
+                gst_amount=Decimal("0"),
+
+                shipping_charge=shipping_charge,
+
+                discount=discount,
+
+                total_amount=total_amount,
+
+                status=OrderStatus.PENDING,
+
+                payment_status=PaymentStatus.PENDING
+
+            )
+
+            await OrderRepository.create_order(
+                db,
+                order
+            )
+
+            # ====================================================
+            # CREATE ORDER ITEMS
+            # ====================================================
+
+            for data in validated_items:
+
+                product = data["product"]
+
+                variant = data["variant"]
+
+                sale_price = data["sale_price"]
+
+                item = data["cart_item"]
+
+                item_total = data["total"]
+
+                order_item = OrderItem(
+
+                    order_id=order.id,
+
+                    product_id=product.id,
+
+                    variant_id=variant.id,
+
+                    product_name=product.name,
+
+                    product_sku=variant.sku,
+
+                    size=variant.size,
+
+                    color=variant.color,
+
+                    variant_attributes=(
+                        variant.attributes
+                    ),
+
+                    quantity=item.quantity,
+
+                    price=sale_price,
+
+                    gst_amount=Decimal("0"),
+
+                    total=item_total
+
+                )
+
+                await OrderRepository.create_order_item(
+                    db,
+                    order_item
+                )
+
+            # ====================================================
+            # CREATE PAYMENT
+            # ====================================================
+
+            payment = Payment(
+
+                order_id=order.id,
+
+                payment_method=(
+                    payload.payment_method
+                ),
+
+                amount=total_amount,
+
+                status=PaymentStatus.PENDING
+
+            )
+
+            db.add(payment)
+
+            await db.commit()
+
+            await db.refresh(order)
+
+            # ====================================================
+            # RESPONSE
+            # ====================================================
+
+            return {
+
+                "success": True,
+
+                "status_code": 201,
+
+                "message": (
+                    "Order created. Complete payment."
+                ),
+
+                "data": {
+
+                    "order_id": str(
+                        order.id
+                    ),
+
+                    "order_number": (
+                        order.order_number
+                    ),
+
+                    "amount": float(
+                        total_amount
+                    )
+
+                }
+
             }
-        }
+
+        except HTTPException:
+
+            await db.rollback()
+
+            raise
+
+        except SQLAlchemyError as e:
+
+            await db.rollback()
+
+            logger.exception(
+                "Database error while creating order"
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail="Database error while creating order"
+            )
+
+        except Exception as e:
+
+            await db.rollback()
+
+            logger.exception(
+                "Error while creating order"
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail="Something went wrong while creating order"
+            )
+
+    # ============================================================
+    # PAYMENT SUCCESS
+    # ============================================================
+
+    @staticmethod
+    async def payment_success(
+        db: AsyncSession,
+        user_id,
+        payload
+    ):
+
+        try:
+
+            # ====================================================
+            # GET ORDER
+            # ====================================================
+
+            order = (
+                await OrderRepository.get_customer_order(
+                    db=db,
+                    order_id=payload.order_id,
+                    user_id=user_id
+                )
+            )
+
+            if not order:
+
+                return {
+                    "success": False,
+                    "status_code": 404,
+                    "message": "Order not found"
+                }
+
+            # ====================================================
+            # IDEMPOTENCY
+            # ====================================================
+
+            if (
+                order.payment_status
+                ==
+                PaymentStatus.PAID
+            ):
+
+                return {
+                    "success": False,
+                    "status_code": 400,
+                    "message": "Payment already completed"
+                }
+
+            # ====================================================
+            # LOCK + VALIDATE VARIANT STOCK
+            # ====================================================
+
+            locked_variants = {}
+
+            for item in order.items:
+
+                if not item.variant_id:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Variant missing for "
+                            f"order item '{item.product_name}'"
+                        )
+                    )
+
+                result = await db.execute(
+
+                    select(ProductVariant)
+
+                    .where(
+                        ProductVariant.id
+                        ==
+                        item.variant_id
+                    )
+
+                    .with_for_update()
+
+                )
+
+                variant = (
+                    result.scalar_one_or_none()
+                )
+
+                if not variant:
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Variant not found for "
+                            f"'{item.product_name}'"
+                        )
+                    )
+
+                available_stock = (
+                    OrderService._get_available_stock(
+                        variant
+                    )
+                )
+
+                if (
+                    available_stock
+                    <
+                    item.quantity
+                ):
+
+                    raise HTTPException(
+                        status_code=400,
+                        detail=(
+                            f"Insufficient stock for "
+                            f"'{item.product_name}'. "
+                            f"Only {available_stock} available."
+                        )
+                    )
+
+                locked_variants[
+                    item.variant_id
+                ] = variant
+
+            # ====================================================
+            # UPDATE PAYMENT
+            # ====================================================
+
+            if order.payments:
+
+                payment = order.payments[0]
+
+                payment.status = (
+                    PaymentStatus.PAID
+                )
+
+                payment.gateway_transaction_id = (
+                    payload.transaction_id
+                )
+
+            # ====================================================
+            # UPDATE ORDER
+            # ====================================================
+
+            order.payment_status = (
+                PaymentStatus.PAID
+            )
+
+            order.status = (
+                OrderStatus.CONFIRMED
+            )
+
+            # ====================================================
+            # DECREASE VARIANT STOCK
+            # ====================================================
+
+            for item in order.items:
+
+                variant = locked_variants[
+                    item.variant_id
+                ]
+
+                variant.stock_qty -= (
+                    item.quantity
+                )
+
+            # ====================================================
+            # COUPON USAGE
+            # ====================================================
+
+            if order.coupon_id:
+
+                coupon_usage = CouponUsage(
+
+                    coupon_id=order.coupon_id,
+
+                    user_id=user_id,
+
+                    order_id=order.id,
+
+                    discount_amount=(
+                        order.discount
+                    )
+
+                )
+
+                db.add(
+                    coupon_usage
+                )
+
+                if order.coupon:
+
+                    order.coupon.used_count += 1
+
+            # ====================================================
+            # CLEAR CART
+            # ====================================================
+
+            cart_items = (
+                await CartRepository.get_all_cart_items(
+                    db,
+                    user_id
+                )
+            )
+
+            for cart_item in cart_items:
+
+                await db.delete(
+                    cart_item
+                )
+
+            # ====================================================
+            # COMMIT PAYMENT + STOCK
+            # ====================================================
+
+            await db.commit()
+
+            await db.refresh(order)
+
+            # ====================================================
+            # BLUE DART WAYBILL
+            # ====================================================
+
+            waybill_info = None
+
+            try:
+
+                if order.address:
+
+                    waybill_res = (
+                        await BlueDartService.generate_waybill(
+                            order,
+                            order.address
+                        )
+                    )
+
+                    shipment = Shipment(
+
+                        id=uuid.uuid4(),
+
+                        order_id=order.id,
+
+                        courier_name="Blue Dart",
+
+                        tracking_number=(
+                            waybill_res.get(
+                                "awb_number"
+                            )
+                        ),
+
+                        pickup_token_number=(
+                            waybill_res.get(
+                                "pickup_token_number"
+                            )
+                        ),
+
+                        origin_area=(
+                            waybill_res.get(
+                                "origin_area"
+                            )
+                        ),
+
+                        destination_area=(
+                            waybill_res.get(
+                                "destination_area"
+                            )
+                        ),
+
+                        destination_location=(
+                            waybill_res.get(
+                                "destination_location"
+                            )
+                        ),
+
+                        status="MANIFESTED"
+
+                    )
+
+                    db.add(
+                        shipment
+                    )
+
+                    order.status = (
+                        OrderStatus.PACKED
+                    )
+
+                    await db.commit()
+
+                    waybill_info = {
+
+                        "awb_number": (
+                            waybill_res.get(
+                                "awb_number"
+                            )
+                        ),
+
+                        "pickup_token_number": (
+                            waybill_res.get(
+                                "pickup_token_number"
+                            )
+                        )
+
+                    }
+
+            except Exception as e:
+
+                logger.exception(
+                    "Blue Dart waybill generation failed "
+                    f"for order {order.order_number}: {e}"
+                )
+
+                # Payment remains successful.
+                # Admin can retry shipment generation.
+
+            # ====================================================
+            # RESPONSE
+            # ====================================================
+
+            return {
+
+                "success": True,
+
+                "status_code": 200,
+
+                "message": (
+                    "Payment successful. "
+                    "Order confirmed."
+                ),
+
+                "data": {
+
+                    "order_id": str(
+                        order.id
+                    ),
+
+                    "order_number": (
+                        order.order_number
+                    ),
+
+                    "payment_status": (
+                        order.payment_status.value
+                    ),
+
+                    "order_status": (
+                        order.status.value
+                    ),
+
+                    "waybill": waybill_info
+
+                }
+
+            }
+
+        except HTTPException:
+
+            await db.rollback()
+
+            raise
+
+        except SQLAlchemyError:
+
+            await db.rollback()
+
+            logger.exception(
+                "Database error during payment success"
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Database error while processing payment"
+                )
+            )
+
+        except Exception:
+
+            await db.rollback()
+
+            logger.exception(
+                "Unexpected payment success error"
+            )
+
+            raise HTTPException(
+                status_code=500,
+                detail=(
+                    "Something went wrong while processing payment"
+                )
+            )
+
+    # ============================================================
+    # GET ALL ORDERS
+    # ============================================================
 
     @staticmethod
     async def get_orders(
-        db,
-        user_id,
+        db: AsyncSession,
+        user_id
     ):
 
-        orders = await OrderRepository.get_orders_by_user(
-            db,
-            user_id,
+        orders = (
+            await OrderRepository.get_orders_by_user(
+                db,
+                user_id
+            )
         )
 
         data = []
@@ -240,9 +997,13 @@ class OrderService:
         for order in orders:
 
             latest_shipment = (
+
                 order.shipments[0]
+
                 if order.shipments
+
                 else None
+
             )
 
             products = []
@@ -250,222 +1011,534 @@ class OrderService:
             for item in order.items:
 
                 products.append({
+
                     "product_id": str(
                         item.product_id
                     ),
 
-                    "product_name":
-                        item.product_name,
-
-                    "quantity":
-                        item.quantity,
-
-                    "price":
-                        float(item.price or 0),
-
-                    "total":
-                        float(item.total or 0),
-
-                    "product_image": (
-                        item.product.thumbnail_url
-                        if item.product
+                    "variant_id": (
+                        str(item.variant_id)
+                        if item.variant_id
                         else None
                     ),
+
+                    "product_name": (
+                        item.product_name
+                    ),
+
+                    "product_sku": (
+                        item.product_sku
+                    ),
+
+                    "size": item.size,
+
+                    "color": item.color,
+
+                    "quantity": (
+                        item.quantity
+                    ),
+
+                    "price": float(
+                        item.price or 0
+                    ),
+
+                    "total": float(
+                        item.total or 0
+                    ),
+
+                    "product_image": (
+
+                        item.product.thumbnail_url
+
+                        if item.product
+
+                        else None
+
+                    )
+
                 })
 
             data.append({
 
-                "order_id":
-                    str(order.id),
+                "order_id": str(
+                    order.id
+                ),
 
-                "order_number":
-                    order.order_number,
+                "order_number": (
+                    order.order_number
+                ),
+
+                "status": (
+
+                    order.status.value
+
+                    if hasattr(
+                        order.status,
+                        "value"
+                    )
+
+                    else str(
+                        order.status
+                    )
+
+                ),
+
+                "payment_status": (
+
+                    order.payment_status.value
+
+                    if hasattr(
+                        order.payment_status,
+                        "value"
+                    )
+
+                    else str(
+                        order.payment_status
+                    )
+
+                ),
+
+                "total_amount": float(
+                    order.total_amount or 0
+                ),
+
+                "order_date": (
+                    order.created_at
+                ),
+
+                "tracking_number": (
+
+                    latest_shipment.tracking_number
+
+                    if latest_shipment
+
+                    else None
+
+                ),
+
+                "delivery_status": (
+
+                    latest_shipment.status
+
+                    if latest_shipment
+
+                    else None
+
+                ),
+
+                "products": products
+
+            })
+
+        return {
+
+            "success": True,
+
+            "status_code": 200,
+
+            "message": (
+                "Orders fetched successfully"
+            ),
+
+            "data": data
+
+        }
+
+    # ============================================================
+    # GET SINGLE ORDER
+    # ============================================================
+
+    @staticmethod
+    async def get_order(
+        db: AsyncSession,
+        user_id,
+        order_id
+    ):
+
+        order = (
+            await OrderRepository.get_customer_order(
+                db=db,
+                order_id=order_id,
+                user_id=user_id
+            )
+        )
+
+        if not order:
+
+            return {
+
+                "success": False,
+
+                "status_code": 404,
+
+                "message": "Order not found"
+
+            }
+
+        shipments_list = []
+
+        for shipment in (
+            getattr(
+                order,
+                "shipments",
+                []
+            )
+        ):
+
+            shipments_list.append({
+
+                "shipment_id": str(
+                    shipment.id
+                ),
+
+                "courier_name": (
+                    shipment.courier_name
+                ),
+
+                "tracking_number": (
+                    shipment.tracking_number
+                ),
+
+                "pickup_token_number": (
+                    shipment.pickup_token_number
+                ),
+
+                "status": shipment.status,
+
+                "last_scanned_location": (
+                    shipment.last_scanned_location
+                ),
+
+                "last_scanned_at": (
+
+                    shipment.last_scanned_at.isoformat()
+
+                    if shipment.last_scanned_at
+
+                    else None
+
+                ),
+
+                "estimated_delivery": (
+
+                    shipment.estimated_delivery.isoformat()
+
+                    if shipment.estimated_delivery
+
+                    else None
+
+                ),
+
+                "awb_pdf_url": (
+                    shipment.awb_pdf_url
+                )
+
+            })
+
+        return {
+
+            "success": True,
+
+            "status_code": 200,
+
+            "message": (
+                "Order details fetched successfully"
+            ),
+
+            "data": {
+
+                "order_id": str(
+                    order.id
+                ),
+
+                "order_number": (
+                    order.order_number
+                ),
+
+                "order_date": (
+                    order.created_at
+                ),
 
                 "status": (
                     order.status.value
-                    if hasattr(
-                        order.status,
-                        "value",
-                    )
-                    else str(order.status)
                 ),
 
                 "payment_status": (
                     order.payment_status.value
-                    if hasattr(
-                        order.payment_status,
-                        "value",
-                    )
-                    else str(order.payment_status)
                 ),
 
-                "total_amount":
-                    float(order.total_amount or 0),
-
-                "order_date":
-                    order.created_at,
-
-                "tracking_number": (
-                    latest_shipment.tracking_number
-                    if latest_shipment
-                    else None
+                "subtotal": float(
+                    order.subtotal
                 ),
 
-                "delivery_status": (
-                    latest_shipment.status
-                    if latest_shipment
-                    else None
+                "shipping_charge": float(
+                    order.shipping_charge
                 ),
 
-                "products":
-                    products,
-            })
+                "discount": float(
+                    order.discount
+                ),
 
-        return {
-            "success": True,
-            "status_code": 200,
-            "message": "Orders fetched successfully",
-            "data": data,
-        }
+                "total_amount": float(
+                    order.total_amount
+                ),
 
-    @staticmethod
-    async def get_order(db, user_id, order_id):
-        order = await OrderRepository.get_order_details(db, order_id, user_id)
-
-        if not order:
-            return {
-                "success": False,
-                "status_code": 404,
-                "message": "Order not found"
-            }
-
-        # Extract Blue Dart shipment record if waybill has been generated
-        shipments_list = []
-        for shipment in getattr(order, "shipments", []):
-            shipments_list.append({
-                "shipment_id": str(shipment.id),
-                "courier_name": shipment.courier_name,
-                "tracking_number": shipment.tracking_number,
-                "pickup_token_number": shipment.pickup_token_number,
-                "status": shipment.status,
-                "last_scanned_location": shipment.last_scanned_location,
-                "last_scanned_at": shipment.last_scanned_at.isoformat() if shipment.last_scanned_at else None,
-                "estimated_delivery": shipment.estimated_delivery.isoformat() if shipment.estimated_delivery else None,
-                "awb_pdf_url": shipment.awb_pdf_url
-            })
-
-        return {
-            "success": True,
-            "status_code": 200,
-            "data": {
-                "order_id": str(order.id),
-                "order_number": order.order_number,
-                "order_date": order.created_at,
-                "status": order.status.value,
-                "payment_status": order.payment_status.value,
-                "subtotal": float(order.subtotal),
-                "shipping_charge": float(order.shipping_charge),
-                "discount": float(order.discount),
-                "total_amount": float(order.total_amount),
-
-                # --- Detailed Blue Dart Tracking ---
                 "shipments": shipments_list,
 
                 "items": [
+
                     {
-                        "product_id": str(item.product_id),
-                        "product_name": item.product_name,
-                        "product_sku": item.product_sku,
-                        "product_image": item.product.thumbnail_url if item.product else None,
-                        "quantity": item.quantity,
-                        "price": float(item.price),
-                        "total": float(item.total)
+
+                        "product_id": str(
+                            item.product_id
+                        ),
+
+                        "variant_id": (
+
+                            str(
+                                item.variant_id
+                            )
+
+                            if item.variant_id
+
+                            else None
+
+                        ),
+
+                        "product_name": (
+                            item.product_name
+                        ),
+
+                        "product_sku": (
+                            item.product_sku
+                        ),
+
+                        "size": (
+                            item.size
+                        ),
+
+                        "color": (
+                            item.color
+                        ),
+
+                        "variant_attributes": (
+                            item.variant_attributes
+                        ),
+
+                        "product_image": (
+
+                            item.product.thumbnail_url
+
+                            if item.product
+
+                            else None
+
+                        ),
+
+                        "quantity": (
+                            item.quantity
+                        ),
+
+                        "price": float(
+                            item.price
+                        ),
+
+                        "total": float(
+                            item.total
+                        )
+
                     }
-                    for item in order.items
+
+                    for item
+                    in order.items
+
                 ]
+
             }
+
         }
 
-    @staticmethod
-    async def cancel_order(db, user_id, order_id, reason):
-        order = await OrderRepository.get_order_details(db, order_id, user_id)
-
-        if not order:
-            return {
-                "success": False,
-                "status_code": 404,
-                "message": "Order not found"
-            }
-
-        if order.status in [
-            OrderStatus.SHIPPED,
-            OrderStatus.OUT_FOR_DELIVERY,
-            OrderStatus.DELIVERED
-        ]:
-            return {
-                "success": False,
-                "status_code": 400,
-                "message": "Order cannot be cancelled after dispatch"
-            }
-
-        # Restock products if order was confirmed
-        if order.status == OrderStatus.CONFIRMED:
-            for item in order.items:
-                if item.product:
-                    item.product.stock_qty += item.quantity
-
-        order.status = OrderStatus.CANCELLED
-        order.cancel_reason = reason
-
-        await db.commit()
-
-        return {
-            "success": True,
-            "status_code": 200,
-            "message": "Order cancelled successfully"
-        }
+    # ============================================================
+    # CANCEL ORDER
+    # ============================================================
 
     @staticmethod
-    async def create_payment_order(db, user_id, payload):
-        cart_items = await CartRepository.get_all_cart_items(db, user_id)
+    async def cancel_order(
+        db: AsyncSession,
+        user_id,
+        order_id,
+        reason
+    ):
 
-        if not cart_items:
+        try:
+
+            order = (
+                await OrderRepository.get_customer_order(
+                    db=db,
+                    order_id=order_id,
+                    user_id=user_id
+                )
+            )
+
+            if not order:
+
+                return {
+
+                    "success": False,
+
+                    "status_code": 404,
+
+                    "message": "Order not found"
+
+                }
+
+            # ----------------------------------------------------
+            # ALREADY CANCELLED
+            # ----------------------------------------------------
+
+            if (
+                order.status
+                ==
+                OrderStatus.CANCELLED
+            ):
+
+                return {
+
+                    "success": False,
+
+                    "status_code": 400,
+
+                    "message": "Order is already cancelled"
+
+                }
+
+            # ----------------------------------------------------
+            # CANNOT CANCEL
+            # ----------------------------------------------------
+
+            if order.status in [
+
+                OrderStatus.SHIPPED,
+
+                OrderStatus.OUT_FOR_DELIVERY,
+
+                OrderStatus.DELIVERED
+
+            ]:
+
+                return {
+
+                    "success": False,
+
+                    "status_code": 400,
+
+                    "message": (
+                        "Order cannot be cancelled "
+                        "after dispatch"
+                    )
+
+                }
+
+            # ----------------------------------------------------
+            # RESTOCK ONLY IF PAYMENT WAS PAID
+            # ----------------------------------------------------
+
+            if (
+                order.payment_status
+                ==
+                PaymentStatus.PAID
+            ):
+
+                for item in order.items:
+
+                    if not item.variant_id:
+
+                        continue
+
+                    result = await db.execute(
+
+                        select(ProductVariant)
+
+                        .where(
+                            ProductVariant.id
+                            ==
+                            item.variant_id
+                        )
+
+                        .with_for_update()
+
+                    )
+
+                    variant = (
+                        result.scalar_one_or_none()
+                    )
+
+                    if variant:
+
+                        variant.stock_qty += (
+                            item.quantity
+                        )
+
+            # ----------------------------------------------------
+            # CANCEL ORDER
+            # ----------------------------------------------------
+
+            order.status = (
+                OrderStatus.CANCELLED
+            )
+
+            order.cancel_reason = (
+                reason
+            )
+
+            await db.commit()
+
             return {
-                "success": False,
-                "message": "Cart is empty"
+
+                "success": True,
+
+                "status_code": 200,
+
+                "message": (
+                    "Order cancelled successfully"
+                )
+
             }
 
-        subtotal = Decimal("0")
-        for item in cart_items:
-            subtotal += item.product.sale_price * item.quantity
+        except HTTPException:
 
-        shipping_charge = Decimal("0")
-        settings = await SettingRepository.get_settings(db)
+            await db.rollback()
 
-        if settings and subtotal < settings.free_shipping_threshold:
-            shipping_charge = settings.delivery_charge
+            raise
 
-        discount = Decimal("0")
-        if payload.coupon_code:
-            coupon = await CouponRepository.get_coupon_by_code(db, payload.coupon_code)
-            if coupon:
-                if coupon.coupon_type.value == "flat":
-                    discount = coupon.discount_value
-                elif coupon.coupon_type.value == "percentage":
-                    discount = (subtotal * coupon.discount_value) / Decimal("100")
+        except SQLAlchemyError:
 
-        total_amount = max(Decimal("0"), subtotal + shipping_charge - discount)
+            await db.rollback()
 
-        return {
-            "success": True,
-            "amount": float(total_amount),
-            "coupon_code": payload.coupon_code,
-            "address_id": str(payload.address_id)
-        }
+            raise HTTPException(
 
-    @staticmethod
-    async def clear_cart(db, user_id):
-        items = await CartRepository.get_all_cart_items(db, user_id)
-        for item in items:
-            await db.delete(item)
-        await db.commit()
+                status_code=500,
+
+                detail=(
+                    "Database error while cancelling order"
+                )
+
+            )
+
+        except Exception:
+
+            await db.rollback()
+
+            logger.exception(
+                "Order cancellation failed"
+            )
+
+            raise HTTPException(
+
+                status_code=500,
+
+                detail=(
+                    "Something went wrong while cancelling order"
+                )
+
+            )

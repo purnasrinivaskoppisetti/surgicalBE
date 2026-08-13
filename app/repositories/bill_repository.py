@@ -1,13 +1,15 @@
-# app/repositories/bill_repository.py
-
 from uuid import UUID
 
 from sqlalchemy import select
+
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from sqlalchemy.orm import joinedload
 
 from app.models.models import (
     Order,
+    OrderItem,
+    Product,
     Payment,
 )
 
@@ -23,16 +25,78 @@ class BillRepository:
         db: AsyncSession,
         order_id: UUID,
     ):
+
         result = await db.execute(
 
             select(Order)
 
             .options(
-                joinedload(Order.user),
-                joinedload(Order.items),
-                joinedload(Order.address),
-                joinedload(Order.payments),
-                joinedload(Order.shipments),
+
+                # ------------------------------------------------
+                # USER
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.user
+                ),
+
+                # ------------------------------------------------
+                # ORDER ITEMS → PRODUCT
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.product
+                )
+                .joinedload(
+                    Product.images
+                ),
+
+                # ------------------------------------------------
+                # ORDER ITEMS → VARIANT
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.items
+                )
+                .joinedload(
+                    OrderItem.variant
+                ),
+
+                # ------------------------------------------------
+                # ADDRESS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.address
+                ),
+
+                # ------------------------------------------------
+                # PAYMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.payments
+                ),
+
+                # ------------------------------------------------
+                # SHIPMENTS
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.shipments
+                ),
+
+                # ------------------------------------------------
+                # COUPON
+                # ------------------------------------------------
+
+                joinedload(
+                    Order.coupon
+                ),
+
             )
 
             .where(
@@ -46,6 +110,7 @@ class BillRepository:
             .scalar_one_or_none()
         )
 
+
     # ============================================================
     # GET PAYMENT
     # ============================================================
@@ -55,6 +120,7 @@ class BillRepository:
         db: AsyncSession,
         order_id: UUID,
     ):
+
         result = await db.execute(
 
             select(Payment)
@@ -68,17 +134,56 @@ class BillRepository:
             )
         )
 
-        return result.scalars().first()
+        return (
+            result
+            .scalars()
+            .first()
+        )
+
 
     # ============================================================
-    # COMMIT
+    # GET PAYMENT WITH DATABASE LOCK
+    # ============================================================
+
+    @staticmethod
+    async def get_payment_for_update(
+        db: AsyncSession,
+        order_id: UUID,
+    ):
+
+        result = await db.execute(
+
+            select(Payment)
+
+            .where(
+                Payment.order_id == order_id
+            )
+
+            .order_by(
+                Payment.created_at.desc()
+            )
+
+            .with_for_update()
+        )
+
+        return (
+            result
+            .scalars()
+            .first()
+        )
+
+
+    # ============================================================
+    # SAVE
     # ============================================================
 
     @staticmethod
     async def save(
         db: AsyncSession,
     ):
+
         await db.commit()
+
 
     # ============================================================
     # REFRESH
@@ -89,4 +194,7 @@ class BillRepository:
         db: AsyncSession,
         obj,
     ):
-        await db.refresh(obj)
+
+        await db.refresh(
+            obj
+        )

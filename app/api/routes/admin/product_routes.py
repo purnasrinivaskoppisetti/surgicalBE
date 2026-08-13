@@ -1,4 +1,7 @@
+import json
+
 from uuid import UUID
+
 from fastapi import (
     APIRouter,
     Depends,
@@ -6,19 +9,24 @@ from fastapi import (
     File,
     Form,
     Query,
-    status
+    status,
+    HTTPException,
 )
+
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.database import get_db
 from app.core.dependencies import get_current_admin
+
 from app.schemas.admin.product_schema import (
     ProductCreate,
-    ProductUpdate
+    ProductUpdate,
 )
+
 from app.services.admin.product_service import (
-    ProductService
+    ProductService,
 )
+
 
 router = APIRouter(
     prefix="/admin/products",
@@ -26,61 +34,163 @@ router = APIRouter(
 )
 
 
-# =====================================================
+# ============================================================
 # CREATE PRODUCT
-# =====================================================
+# ============================================================
 
 @router.post(
     "",
     status_code=status.HTTP_201_CREATED
 )
 async def create_product(
+
     category_id: UUID = Form(...),
+
     name: str = Form(...),
-    sku: str = Form(...),
+
     brand: str | None = Form(None),
+
     description: str | None = Form(None),
+
     short_description: str | None = Form(None),
+
     mrp: float = Form(...),
+
     sale_price: float = Form(...),
-    stock_qty: int = Form(0),
-    
-    # --- Shipping & Package Dimensions ---
-    weight: float = Form(0.5, description="Weight in kg"),
-    length: float = Form(10.0, description="Length in cm"),
-    breadth: float = Form(10.0, description="Breadth in cm"),
-    height: float = Form(10.0, description="Height in cm"),
+
+    # --------------------------------------------------------
+    # VARIANTS JSON
+    # --------------------------------------------------------
+    #
+    # Example:
+    #
+    # [
+    #   {
+    #       "size": "S",
+    #       "sku": "TS-S",
+    #       "stock_qty": 10
+    #   },
+    #   {
+    #       "size": "M",
+    #       "sku": "TS-M",
+    #       "stock_qty": 20
+    #   }
+    # ]
+    #
+
+    variants: str = Form(
+        "[]",
+        description="Product variants as JSON"
+    ),
+
+    # --------------------------------------------------------
+    # SHIPPING
+    # --------------------------------------------------------
+
+    weight: float = Form(
+        0.5,
+        description="Weight in kg"
+    ),
+
+    length: float = Form(
+        10.0,
+        description="Length in cm"
+    ),
+
+    breadth: float = Form(
+        10.0,
+        description="Breadth in cm"
+    ),
+
+    height: float = Form(
+        10.0,
+        description="Height in cm"
+    ),
 
     manufacturer: str | None = Form(None),
+
     hsn_code: str | None = Form(None),
+
     is_featured: bool = Form(False),
+
     is_bestseller: bool = Form(False),
+
     is_new_arrival: bool = Form(False),
+
     images: list[UploadFile] = File(...),
+
     db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin)
+
+    admin=Depends(get_current_admin),
+
 ):
 
-    payload = ProductCreate(
-        category_id=category_id,
-        name=name,
-        sku=sku,
-        brand=brand,
-        description=description,
-        short_description=short_description,
-        mrp=mrp,
-        sale_price=sale_price,
-        stock_qty=stock_qty,
-        weight=weight,
-        length=length,
-        breadth=breadth,
-        height=height,
-        manufacturer=manufacturer,
-        hsn_code=hsn_code,
-        is_featured=is_featured,
-        is_bestseller=is_bestseller,
-        is_new_arrival=is_new_arrival
-    )
+    # --------------------------------------------------------
+    # PARSE VARIANTS
+    # --------------------------------------------------------
+
+    try:
+
+        variants_data = json.loads(variants)
+
+        if not isinstance(variants_data, list):
+            raise ValueError()
+
+    except Exception:
+
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid variants JSON"
+        )
+
+    # --------------------------------------------------------
+    # BUILD PAYLOAD
+    # --------------------------------------------------------
+
+    try:
+
+        payload = ProductCreate(
+            category_id=category_id,
+
+            name=name,
+
+            brand=brand,
+
+            description=description,
+
+            short_description=short_description,
+
+            mrp=mrp,
+
+            sale_price=sale_price,
+
+            variants=variants_data,
+
+            weight=weight,
+
+            length=length,
+
+            breadth=breadth,
+
+            height=height,
+
+            manufacturer=manufacturer,
+
+            hsn_code=hsn_code,
+
+            is_featured=is_featured,
+
+            is_bestseller=is_bestseller,
+
+            is_new_arrival=is_new_arrival,
+        )
+
+    except Exception as e:
+
+        raise HTTPException(
+            status_code=422,
+            detail=str(e)
+        )
 
     return await ProductService.create_product(
         db=db,
@@ -89,18 +199,32 @@ async def create_product(
     )
 
 
-# =====================================================
+# ============================================================
 # GET ALL PRODUCTS
-# =====================================================
+# ============================================================
 
 @router.get("")
 async def get_products(
-    page: int = Query(1, ge=1),
-    page_size: int = Query(20, ge=1, le=100),
+
+    page: int = Query(
+        1,
+        ge=1
+    ),
+
+    page_size: int = Query(
+        20,
+        ge=1,
+        le=100
+    ),
+
     search: str | None = Query(None),
+
     category_id: UUID | None = Query(None),
+
     db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin)
+
+    admin=Depends(get_current_admin),
+
 ):
 
     return await ProductService.get_products(
@@ -112,15 +236,19 @@ async def get_products(
     )
 
 
-# =====================================================
+# ============================================================
 # GET PRODUCT DETAILS
-# =====================================================
+# ============================================================
 
 @router.get("/{product_id}")
 async def get_product(
+
     product_id: UUID,
+
     db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin)
+
+    admin=Depends(get_current_admin),
+
 ):
 
     return await ProductService.get_product(
@@ -129,77 +257,150 @@ async def get_product(
     )
 
 
-# =====================================================
+# ============================================================
 # UPDATE PRODUCT
-# =====================================================
+# ============================================================
 
 @router.put("/{product_id}")
 async def update_product(
-    product_id: UUID,
-    category_id: UUID | None = Form(None),
-    name: str | None = Form(None),
-    sku: str | None = Form(None),
-    brand: str | None = Form(None),
-    description: str | None = Form(None),
-    short_description: str | None = Form(None),
-    mrp: float | None = Form(None),
-    sale_price: float | None = Form(None),
-    stock_qty: int | None = Form(None),
 
-    # --- Shipping & Package Dimensions ---
+    product_id: UUID,
+
+    category_id: UUID | None = Form(None),
+
+    name: str | None = Form(None),
+
+    brand: str | None = Form(None),
+
+    description: str | None = Form(None),
+
+    short_description: str | None = Form(None),
+
+    mrp: float | None = Form(None),
+
+    sale_price: float | None = Form(None),
+
+    # --------------------------------------------------------
+    # VARIANTS JSON
+    # --------------------------------------------------------
+
+    variants: str | None = Form(None),
+
+    # --------------------------------------------------------
+    # SHIPPING
+    # --------------------------------------------------------
+
     weight: float | None = Form(None),
+
     length: float | None = Form(None),
+
     breadth: float | None = Form(None),
+
     height: float | None = Form(None),
 
     manufacturer: str | None = Form(None),
+
     hsn_code: str | None = Form(None),
+
     is_featured: bool | None = Form(None),
+
     is_bestseller: bool | None = Form(None),
+
     is_new_arrival: bool | None = Form(None),
+
     images: list[UploadFile] | None = File(None),
+
     db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin)
+
+    admin=Depends(get_current_admin),
+
 ):
 
+    variants_data = None
+
+    if variants is not None:
+
+        try:
+
+            variants_data = json.loads(variants)
+
+            if not isinstance(variants_data, list):
+                raise ValueError()
+
+        except Exception:
+
+            raise HTTPException(
+                status_code=400,
+                detail="Invalid variants JSON"
+            )
+
+    # --------------------------------------------------------
+    # BUILD PAYLOAD
+    # --------------------------------------------------------
+
     payload = ProductUpdate(
+
         category_id=category_id,
+
         name=name,
-        sku=sku,
+
         brand=brand,
+
         description=description,
+
         short_description=short_description,
+
         mrp=mrp,
+
         sale_price=sale_price,
-        stock_qty=stock_qty,
+
+        variants=variants_data,
+
         weight=weight,
+
         length=length,
+
         breadth=breadth,
+
         height=height,
+
         manufacturer=manufacturer,
+
         hsn_code=hsn_code,
+
         is_featured=is_featured,
+
         is_bestseller=is_bestseller,
-        is_new_arrival=is_new_arrival
+
+        is_new_arrival=is_new_arrival,
     )
 
     return await ProductService.update_product(
+
         db=db,
+
         product_id=product_id,
+
         payload=payload,
+
         images=images
+
     )
 
 
-# =====================================================
+# ============================================================
 # DELETE PRODUCT
-# =====================================================
+# ============================================================
 
 @router.delete("/{product_id}")
 async def delete_product(
+
     product_id: UUID,
+
     db: AsyncSession = Depends(get_db),
-    admin=Depends(get_current_admin)
+
+    admin=Depends(get_current_admin),
+
 ):
 
     return await ProductService.delete_product(
