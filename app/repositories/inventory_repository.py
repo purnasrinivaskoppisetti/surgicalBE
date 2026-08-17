@@ -1,14 +1,12 @@
-from sqlalchemy import (
-    select,
-    func
-)
+from datetime import datetime
+
+from sqlalchemy import select, func, desc
 
 from app.models.models import (
     Product,
-    InventoryLog
+    ProductVariant,
+    InventoryLog,
 )
-
-from sqlalchemy.orm import joinedload
 
 
 class InventoryRepository:
@@ -16,65 +14,121 @@ class InventoryRepository:
     @staticmethod
     async def get_inventory_dashboard(db):
 
+        # ============================================================
+        # TOTAL STOCK
+        # ============================================================
+
         total_stock = await db.scalar(
             select(
                 func.coalesce(
-                    func.sum(Product.stock_qty),
+                    func.sum(ProductVariant.stock_qty),
                     0
                 )
             )
+            .join(
+                Product,
+                Product.id == ProductVariant.product_id
+            )
             .where(
-                Product.is_deleted == False
+                Product.is_deleted == False,
+                ProductVariant.is_active == True,
             )
         )
+
+        # ============================================================
+        # LOW STOCK
+        #
+        # 1 - 25 units
+        # ============================================================
 
         low_stock = await db.scalar(
-            select(func.count(Product.id))
+            select(
+                func.count(ProductVariant.id)
+            )
+            .join(
+                Product,
+                Product.id == ProductVariant.product_id
+            )
             .where(
-                Product.stock_qty.between(1, 25),
-                Product.is_deleted == False
+                Product.is_deleted == False,
+                ProductVariant.is_active == True,
+                ProductVariant.stock_qty.between(1, 25),
             )
         )
 
+        # ============================================================
+        # OUT OF STOCK
+        # ============================================================
+
         out_of_stock = await db.scalar(
-            select(func.count(Product.id))
+            select(
+                func.count(ProductVariant.id)
+            )
+            .join(
+                Product,
+                Product.id == ProductVariant.product_id
+            )
             .where(
-                Product.stock_qty == 0,
-                Product.is_deleted == False
+                Product.is_deleted == False,
+                ProductVariant.is_active == True,
+                ProductVariant.stock_qty == 0,
             )
         )
+
+        # ============================================================
+        # STOCK MOVEMENTS TODAY
+        # ============================================================
+
+        today = datetime.utcnow().date()
 
         movements_today = await db.scalar(
             select(
-                func.count(
-                    InventoryLog.id
-                )
-            )
-        )
-
-        result = await db.execute(
-            select(Product)
-            .options(
-                joinedload(Product.category)
+                func.count(InventoryLog.id)
             )
             .where(
-                Product.is_deleted == False
+                func.date(
+                    InventoryLog.created_at
+                ) == today
+            )
+        )
+
+        # ============================================================
+        # INVENTORY PRODUCTS / VARIANTS
+        #
+        # Inventory belongs to ProductVariant, not Product.
+        # ============================================================
+
+        result = await db.execute(
+            select(
+                Product.id.label("product_id"),
+                Product.name.label("product_name"),
+                ProductVariant.id.label("variant_id"),
+                ProductVariant.sku.label("sku"),
+                ProductVariant.size.label("size"),
+                ProductVariant.color.label("color"),
+                ProductVariant.stock_qty.label("stock_qty"),
+                ProductVariant.reserved_qty.label("reserved_qty"),
+            )
+            .join(
+                ProductVariant,
+                ProductVariant.product_id == Product.id
+            )
+            .where(
+                Product.is_deleted == False,
+                ProductVariant.is_active == True,
             )
             .order_by(
-                Product.stock_qty.asc()
+                ProductVariant.stock_qty.asc(),
+                Product.name.asc(),
             )
         )
 
-        products = (
-            result
-            .scalars()
-            .all()
-        )
+        products = result.all()
 
         return (
-            total_stock,
-            low_stock,
-            out_of_stock,
-            movements_today,
-            products
+            int(total_stock or 0),
+            int(low_stock or 0),
+            int(out_of_stock or 0),
+            int(movements_today or 0),
+            products,
         )
