@@ -1,9 +1,9 @@
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
-from sqlalchemy import select, func
+
 from app.models.models import (
     WishlistItem,
     Product
@@ -18,6 +18,7 @@ class WishlistRepository:
         user_id: UUID,
         product_id: UUID
     ):
+
         result = await db.execute(
             select(WishlistItem)
             .where(
@@ -33,10 +34,14 @@ class WishlistRepository:
         db: AsyncSession,
         wishlist_item: WishlistItem
     ):
+
         db.add(wishlist_item)
 
         await db.commit()
-        await db.refresh(wishlist_item)
+
+        await db.refresh(
+            wishlist_item
+        )
 
         return wishlist_item
 
@@ -48,42 +53,99 @@ class WishlistRepository:
         page_size: int
     ):
 
+        # ========================================================
+        # TOTAL COUNT
+        # ========================================================
+
         count_result = await db.execute(
-            select(func.count(WishlistItem.id))
+            select(
+                func.count(WishlistItem.id)
+            )
             .where(
                 WishlistItem.user_id == user_id
             )
         )
 
-        total_records = count_result.scalar() or 0
+        total_records = (
+            count_result.scalar() or 0
+        )
+
+        # ========================================================
+        # GET WISHLIST
+        # ========================================================
 
         result = await db.execute(
-            select(WishlistItem)
-            .options(
-                joinedload(WishlistItem.product)
-                .joinedload(Product.images),
 
-                joinedload(WishlistItem.product)
-                .joinedload(Product.category)
+            select(WishlistItem)
+
+            .options(
+
+                # Product
+                joinedload(
+                    WishlistItem.product
+                ),
+
+                # Product Images
+                joinedload(
+                    WishlistItem.product
+                ).joinedload(
+                    Product.images
+                ),
+
+                # Product Category
+                joinedload(
+                    WishlistItem.product
+                ).joinedload(
+                    Product.category
+                ),
+
+                # Product Variants
+                joinedload(
+                    WishlistItem.product
+                ).joinedload(
+                    Product.variants
+                )
             )
+
             .where(
                 WishlistItem.user_id == user_id
             )
+
             .order_by(
                 WishlistItem.created_at.desc()
             )
-            .offset((page - 1) * page_size)
-            .limit(page_size)
+
+            .offset(
+                (page - 1) * page_size
+            )
+
+            .limit(
+                page_size
+            )
         )
 
-        items = result.unique().scalars().all()
+        # joinedload on multiple collections
+        # can create duplicate rows.
+        items = (
+            result
+            .unique()
+            .scalars()
+            .all()
+        )
 
-        return items, total_records
+        return (
+            items,
+            total_records
+        )
 
     @staticmethod
     async def delete(
         db: AsyncSession,
         wishlist_item: WishlistItem
     ):
-        await db.delete(wishlist_item)
+
+        await db.delete(
+            wishlist_item
+        )
+
         await db.commit()

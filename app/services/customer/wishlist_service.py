@@ -1,11 +1,21 @@
 from uuid import UUID
 
 from app.models.models import WishlistItem
-from app.repositories.wishlist_repository import WishlistRepository
-from app.repositories.product_repository import ProductRepository
+
+from app.repositories.wishlist_repository import (
+    WishlistRepository
+)
+
+from app.repositories.product_repository import (
+    ProductRepository
+)
 
 
 class WishlistService:
+
+    # ============================================================
+    # ADD TO WISHLIST
+    # ============================================================
 
     @staticmethod
     async def add_to_wishlist(
@@ -20,19 +30,23 @@ class WishlistService:
         )
 
         if not product:
+
             return {
                 "success": False,
                 "status_code": 404,
                 "message": "Product not found"
             }
 
-        existing = await WishlistRepository.get_by_user_and_product(
-            db,
-            user_id,
-            product_id
+        existing = (
+            await WishlistRepository.get_by_user_and_product(
+                db,
+                user_id,
+                product_id
+            )
         )
 
         if existing:
+
             return {
                 "success": False,
                 "status_code": 400,
@@ -55,6 +69,10 @@ class WishlistService:
             "message": "Product added to wishlist"
         }
 
+    # ============================================================
+    # GET CUSTOMER WISHLIST
+    # ============================================================
+
     @staticmethod
     async def get_wishlist(
         db,
@@ -63,12 +81,18 @@ class WishlistService:
         page_size: int
     ):
 
-        items, total_records = await WishlistRepository.get_user_wishlist(
-            db=db,
-            user_id=user_id,
-            page=page,
-            page_size=page_size
+        items, total_records = (
+            await WishlistRepository.get_user_wishlist(
+                db=db,
+                user_id=user_id,
+                page=page,
+                page_size=page_size
+            )
         )
+
+        # ========================================================
+        # PAGINATION
+        # ========================================================
 
         total_pages = (
             (total_records + page_size - 1) // page_size
@@ -76,7 +100,12 @@ class WishlistService:
             else 0
         )
 
+        # ========================================================
+        # EMPTY WISHLIST
+        # ========================================================
+
         if not items:
+
             return {
                 "success": True,
                 "status_code": 200,
@@ -94,36 +123,157 @@ class WishlistService:
 
         wishlist_data = []
 
+        # ========================================================
+        # BUILD WISHLIST RESPONSE
+        # ========================================================
+
         for item in items:
 
             product = item.product
 
+            if not product:
+                continue
+
+            # ====================================================
+            # DISCOUNT
+            # ====================================================
+
             discount_percentage = 0
 
-            if float(product.mrp) > 0:
+            if product.mrp is not None and float(product.mrp) > 0:
+
                 discount_percentage = round(
                     (
-                        (float(product.mrp) - float(product.sale_price))
-                        / float(product.mrp)
-                    ) * 100
+                        (
+                            float(product.mrp)
+                            -
+                            float(product.sale_price)
+                        )
+                        /
+                        float(product.mrp)
+                    )
+                    * 100
                 )
 
-            if product.stock_qty == 0:
+            # ====================================================
+            # AVAILABLE STOCK
+            #
+            # Stock is maintained at ProductVariant level.
+            #
+            # available stock =
+            # stock_qty - reserved_qty
+            # ====================================================
+
+            available_stock = sum(
+                max(
+                    0,
+                    variant.stock_qty - variant.reserved_qty
+                )
+                for variant in product.variants
+            )
+
+            # ====================================================
+            # STOCK STATUS
+            # ====================================================
+
+            if available_stock == 0:
+
                 stock_status = "Out of Stock"
-            elif product.stock_qty <= 10:
+
+            elif available_stock <= 10:
+
                 stock_status = "Limited Stock"
+
             else:
+
                 stock_status = "In Stock"
+
+            # ====================================================
+            # VARIANTS
+            # ====================================================
+
+            variants_data = []
+
+            for variant in product.variants:
+
+                variant_available_stock = max(
+                    0,
+                    variant.stock_qty - variant.reserved_qty
+                )
+
+                variant_mrp = (
+                    variant.mrp
+                    if variant.mrp is not None
+                    else product.mrp
+                )
+
+                variant_sale_price = (
+                    variant.sale_price
+                    if variant.sale_price is not None
+                    else product.sale_price
+                )
+
+                variants_data.append(
+                    {
+                        "variant_id": str(
+                            variant.id
+                        ),
+
+                        "sku": variant.sku,
+
+                        "size": variant.size,
+
+                        "color": variant.color,
+
+                        "attributes": (
+                            variant.attributes
+                        ),
+
+                        "mrp": str(
+                            variant_mrp
+                        ),
+
+                        "sale_price": str(
+                            variant_sale_price
+                        ),
+
+                        "stock_qty": (
+                            variant.stock_qty
+                        ),
+
+                        "reserved_qty": (
+                            variant.reserved_qty
+                        ),
+
+                        "available_stock": (
+                            variant_available_stock
+                        ),
+
+                        "is_active": (
+                            variant.is_active
+                        )
+                    }
+                )
+
+            # ====================================================
+            # PRODUCT DATA
+            # ====================================================
 
             wishlist_data.append(
                 {
-                    "wishlist_id": str(item.id),
+                    "wishlist_id": str(
+                        item.id
+                    ),
 
-                    "product_id": str(product.id),
+                    "product_id": str(
+                        product.id
+                    ),
 
-                    "category_id": str(product.category_id)
-                    if product.category_id
-                    else None,
+                    "category_id": (
+                        str(product.category_id)
+                        if product.category_id
+                        else None
+                    ),
 
                     "category_name": (
                         product.category.name
@@ -132,42 +282,106 @@ class WishlistService:
                     ),
 
                     "name": product.name,
+
                     "slug": product.slug,
-                    "sku": product.sku,
+
+                    # Product can have multiple SKUs
+                    "skus": [
+                        variant.sku
+                        for variant in product.variants
+                    ],
+
                     "brand": product.brand,
 
-                    "short_description": product.short_description,
+                    "short_description": (
+                        product.short_description
+                    ),
 
-                    "mrp": str(product.mrp),
-                    "sale_price": str(product.sale_price),
+                    "mrp": str(
+                        product.mrp
+                    ),
 
-                    "discount_percentage": discount_percentage,
+                    "sale_price": str(
+                        product.sale_price
+                    ),
 
-                    "stock_qty": product.stock_qty,
-                    "stock_status": stock_status,
+                    "discount_percentage": (
+                        discount_percentage
+                    ),
 
-                    "thumbnail_url": product.thumbnail_url,
+                    "stock_qty": (
+                        available_stock
+                    ),
 
-                    "rating": str(product.rating),
-                    "review_count": product.review_count,
+                    "stock_status": (
+                        stock_status
+                    ),
 
-                    "is_featured": product.is_featured,
-                    "is_bestseller": product.is_bestseller,
-                    "is_new_arrival": product.is_new_arrival,
+                    "thumbnail_url": (
+                        product.thumbnail_url
+                    ),
 
-                    "created_at": product.created_at,
+                    "rating": str(
+                        product.rating
+                    ),
+
+                    "review_count": (
+                        product.review_count
+                    ),
+
+                    "is_featured": (
+                        product.is_featured
+                    ),
+
+                    "is_bestseller": (
+                        product.is_bestseller
+                    ),
+
+                    "is_new_arrival": (
+                        product.is_new_arrival
+                    ),
+
+                    "created_at": (
+                        product.created_at
+                    ),
+
+                    # =================================================
+                    # VARIANTS
+                    # =================================================
+
+                    "variants": variants_data,
+
+                    # =================================================
+                    # IMAGES
+                    # =================================================
 
                     "images": [
                         {
-                            "id": str(image.id),
-                            "image_url": image.image_url,
-                            "is_primary": image.is_primary,
-                            "sort_order": image.sort_order
+                            "id": str(
+                                image.id
+                            ),
+
+                            "image_url": (
+                                image.image_url
+                            ),
+
+                            "is_primary": (
+                                image.is_primary
+                            ),
+
+                            "sort_order": (
+                                image.sort_order
+                            )
                         }
+
                         for image in product.images
                     ]
                 }
             )
+
+        # ========================================================
+        # FINAL RESPONSE
+        # ========================================================
 
         return {
             "success": True,
@@ -179,10 +393,19 @@ class WishlistService:
                 "page_size": page_size,
                 "total_records": total_records,
                 "total_pages": total_pages,
-                "has_next": page < total_pages,
-                "has_previous": page > 1
+                "has_next": (
+                    page < total_pages
+                ),
+                "has_previous": (
+                    page > 1
+                )
             }
         }
+
+    # ============================================================
+    # REMOVE FROM WISHLIST
+    # ============================================================
+
     @staticmethod
     async def remove_from_wishlist(
         db,
@@ -190,13 +413,16 @@ class WishlistService:
         product_id: UUID
     ):
 
-        item = await WishlistRepository.get_by_user_and_product(
-            db,
-            user_id,
-            product_id
+        item = (
+            await WishlistRepository.get_by_user_and_product(
+                db,
+                user_id,
+                product_id
+            )
         )
 
         if not item:
+
             return {
                 "success": False,
                 "status_code": 404,

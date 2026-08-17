@@ -420,7 +420,8 @@ class OrderRepository:
             )
 
             .where(
-                Order.user_id == user_id
+                Order.user_id == user_id,
+                Order.payment_status == PaymentStatus.PAID
             )
 
             .order_by(
