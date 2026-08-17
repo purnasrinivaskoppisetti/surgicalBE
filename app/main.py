@@ -154,7 +154,7 @@ async def lifespan(app: FastAPI):
 
             trigger="interval",
 
-            minutes=1,
+            minutes=10,
 
             id="blue_dart_tracking_job",
 
