@@ -1,7 +1,10 @@
 # app/api/routes/shipping_routes.py
 
 from uuid import UUID
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.models import Address
 from fastapi import (
     APIRouter,
     Depends,
@@ -297,6 +300,10 @@ async def track_shipment_by_awb(
 # TRACK CUSTOMER ORDER
 # ================================================================
 
+# ================================================================
+# TRACK CUSTOMER ORDER
+# ================================================================
+
 @router.get(
     "/track-order/{order_id}"
 )
@@ -320,12 +327,13 @@ async def track_my_order(
     Backend:
         1. Authenticates customer
         2. Checks order ownership
-        3. Finds shipment
-        4. Gets AWB
-        5. Calls Blue Dart
-        6. Updates local shipment
-        7. Saves scan history
-        8. Returns live tracking data
+        3. Gets customer's saved order address
+        4. Finds shipment
+        5. Gets AWB
+        6. Calls Blue Dart
+        7. Updates local shipment
+        8. Saves scan history
+        9. Returns live tracking data
     """
 
     # ============================================================
@@ -354,7 +362,86 @@ async def track_my_order(
         )
 
     # ============================================================
-    # 3. FIND SHIPMENT
+    # 3. GET CUSTOMER SAVED ADDRESS
+    # ============================================================
+    #
+    # IMPORTANT:
+    # Do NOT use Blue Dart's Destination here.
+    #
+    # Blue Dart may return:
+    #
+    #     Destination = GUNTUR
+    #
+    # even when the customer's actual saved address is:
+    #
+    #     Narsapur - 534281
+    #
+    # The order has address_id, so use the address linked
+    # to this specific order.
+    # ============================================================
+
+    customer_address = None
+
+    if order.address_id:
+
+        address_result = await db.execute(
+            select(Address).where(
+                Address.id == order.address_id
+            )
+        )
+
+        customer_address = (
+            address_result.scalar_one_or_none()
+        )
+
+    # ============================================================
+    # 4. BUILD CUSTOMER DESTINATION
+    # ============================================================
+
+    destination = None
+
+    if customer_address:
+
+        destination = {
+            "full_name": (
+                customer_address.full_name
+            ),
+
+            "address_line1": (
+                customer_address.address_line1
+            ),
+
+            "address_line2": (
+                customer_address.address_line2
+            ),
+
+            "landmark": (
+                customer_address.landmark
+            ),
+
+            "city": (
+                customer_address.city
+            ),
+
+            "state": (
+                customer_address.state
+            ),
+
+            "pincode": (
+                customer_address.pincode
+            ),
+
+            "country": (
+                customer_address.country
+            ),
+
+            "phone": (
+                customer_address.phone
+            ),
+        }
+
+    # ============================================================
+    # 5. FIND SHIPMENT
     # ============================================================
 
     shipment = (
@@ -365,7 +452,7 @@ async def track_my_order(
     )
 
     # ============================================================
-    # 4. WAYBILL NOT GENERATED
+    # 6. WAYBILL NOT GENERATED
     # ============================================================
 
     if (
@@ -383,6 +470,7 @@ async def track_my_order(
             order_status,
             "value",
         ):
+
             order_status = (
                 order_status.value
             )
@@ -425,14 +513,14 @@ async def track_my_order(
 
                 "origin": None,
 
-                "destination": None,
+                "destination": destination,
 
                 "scans": [],
             },
         }
 
     # ============================================================
-    # 5. GET AWB
+    # 7. GET AWB
     # ============================================================
 
     awb_number = (
@@ -440,7 +528,7 @@ async def track_my_order(
     )
 
     # ============================================================
-    # 6. CALL BLUE DART
+    # 8. CALL BLUE DART
     # ============================================================
 
     try:
@@ -452,6 +540,7 @@ async def track_my_order(
         )
 
     except HTTPException:
+
         raise
 
     except Exception as exc:
@@ -465,7 +554,7 @@ async def track_my_order(
         )
 
     # ============================================================
-    # 7. UPDATE LOCAL SHIPMENT
+    # 9. UPDATE LOCAL SHIPMENT
     # ============================================================
 
     scans = tracking_data.get(
@@ -481,10 +570,12 @@ async def track_my_order(
 
     if tracking_status:
 
-        shipment.status = tracking_status
+        shipment.status = (
+            tracking_status
+        )
 
     # ============================================================
-    # 8. SAVE LATEST SCAN
+    # 10. SAVE LATEST SCAN
     # ============================================================
 
     if scans:
@@ -504,6 +595,7 @@ async def track_my_order(
         )
 
         # Save tracking history
+
         await ShipmentRepository.save_scan_logs(
             db,
             shipment.id,
@@ -511,7 +603,7 @@ async def track_my_order(
         )
 
     # ============================================================
-    # 9. COMMIT LOCAL TRACKING DATA
+    # 11. COMMIT LOCAL TRACKING DATA
     # ============================================================
 
     try:
@@ -526,11 +618,10 @@ async def track_my_order(
 
         await db.rollback()
 
-        # Important:
-        # Tracking from Blue Dart was successful.
-        # Local DB update failed.
+        # Blue Dart tracking was successful,
+        # but local database update failed.
         #
-        # We don't hide the live tracking result.
+        # We still return the live tracking data.
 
         return {
             "success": True,
@@ -551,8 +642,8 @@ async def track_my_order(
                     order.order_number
                 ),
 
-                "shipment_id": str(
-                    shipment.id
+                "shipment_id": (
+                    str(shipment.id)
                 ),
 
                 "courier": (
@@ -567,28 +658,26 @@ async def track_my_order(
                     tracking_status
                 ),
 
+                # Blue Dart origin
                 "origin": (
                     tracking_data.get(
                         "origin"
                     )
                 ),
 
-                "destination": (
-                    tracking_data.get(
-                        "destination"
-                    )
-                ),
+                # CUSTOMER SAVED ADDRESS
+                "destination": destination,
 
                 "scans": scans,
 
-                "database_sync_error": str(
-                    exc
+                "database_sync_error": (
+                    str(exc)
                 ),
             },
         }
 
     # ============================================================
-    # 10. ORDER STATUS
+    # 12. ORDER STATUS
     # ============================================================
 
     order_status = getattr(
@@ -601,12 +690,13 @@ async def track_my_order(
         order_status,
         "value",
     ):
+
         order_status = (
             order_status.value
         )
 
     # ============================================================
-    # 11. FINAL RESPONSE
+    # 13. FINAL RESPONSE
     # ============================================================
 
     return {
@@ -639,8 +729,8 @@ async def track_my_order(
             # SHIPMENT
             # ----------------------------------------------------
 
-            "shipment_id": str(
-                shipment.id
+            "shipment_id": (
+                str(shipment.id)
             ),
 
             "courier": (
@@ -663,17 +753,21 @@ async def track_my_order(
                 tracking_status
             ),
 
+            # Blue Dart origin
             "origin": (
                 tracking_data.get(
                     "origin"
                 )
             ),
 
-            "destination": (
-                tracking_data.get(
-                    "destination"
-                )
-            ),
+            # IMPORTANT:
+            # Use customer's saved order address,
+            # NOT Blue Dart's destination.
+            "destination": destination,
+
+            # ----------------------------------------------------
+            # LAST SCAN
+            # ----------------------------------------------------
 
             "last_scanned_location": (
                 shipment.last_scanned_location

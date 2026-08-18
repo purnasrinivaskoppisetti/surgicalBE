@@ -1422,45 +1422,58 @@ class BlueDartService:
         awb_number: str,
     ) -> dict:
 
+        # ============================================================
+        # 1. GET JWT TOKEN
+        # ============================================================
+
         token = await cls.get_jwt_token()
+
+        # ============================================================
+        # 2. BLUE DART TRACKING URL
+        # ============================================================
 
         url = (
             f"{settings.BLUEDART_BASE_URL}"
             "/in/transportation/tracking/v1/shipment"
         )
 
+        # ============================================================
+        # 3. TRACKING LICENSE KEY
+        # ============================================================
+
         tracking_license_key = (
             settings.BLUEDART_TRACKING_LICENSE_KEY
             or settings.BLUEDART_LICENSE_KEY
         )
+
+        # ============================================================
+        # 4. HEADERS
+        # ============================================================
 
         headers = {
             "JWTToken": token,
             "Accept": "application/xml",
         }
 
+        # ============================================================
+        # 5. QUERY PARAMETERS
+        # ============================================================
+
         params = {
-
             "handler": "tnt",
-
             "action": "custawbquery",
-
-            "loginid": (
-                settings.BLUEDART_LOGIN_ID
-            ),
-
+            "loginid": settings.BLUEDART_LOGIN_ID,
             "awb": "awb",
-
             "numbers": awb_number,
-
             "format": "xml",
-
             "lickey": tracking_license_key,
-
             "verno": "1",
-
             "scan": "1",
         }
+
+        # ============================================================
+        # 6. CALL BLUE DART
+        # ============================================================
 
         try:
 
@@ -1484,6 +1497,10 @@ class BlueDartService:
                 ),
             )
 
+        # ============================================================
+        # 7. CHECK RESPONSE STATUS
+        # ============================================================
+
         if response.status_code != 200:
 
             raise HTTPException(
@@ -1493,6 +1510,10 @@ class BlueDartService:
                     f"{response.text}"
                 ),
             )
+
+        # ============================================================
+        # 8. PARSE XML
+        # ============================================================
 
         try:
 
@@ -1510,6 +1531,10 @@ class BlueDartService:
                 ),
             )
 
+        # ============================================================
+        # 9. FIND SHIPMENT
+        # ============================================================
+
         shipment = root.find(
             "Shipment"
         )
@@ -1524,20 +1549,43 @@ class BlueDartService:
                 "scans": [],
             }
 
+        # ============================================================
+        # 10. SHIPMENT STATUS
+        # ============================================================
+
         status = shipment.findtext(
             "Status",
             default="PICKUP HAS BEEN REGISTERED",
         )
+
+        # ============================================================
+        # 11. ORIGIN
+        # ============================================================
 
         origin = shipment.findtext(
             "Origin",
             default="",
         )
 
+        # ============================================================
+        # 12. BLUE DART DESTINATION
+        # ============================================================
+        #
+        # NOTE:
+        # This is Blue Dart's destination.
+        #
+        # For the customer-facing order API, we will replace
+        # this with the customer's saved address from order.address.
+        #
+
         destination = shipment.findtext(
             "Destination",
             default="",
         )
+
+        # ============================================================
+        # 13. SCANS
+        # ============================================================
 
         scans = []
 
@@ -1551,6 +1599,10 @@ class BlueDartService:
                 "ScanDetail"
             ):
 
+                # ----------------------------------------------------
+                # Scan status
+                # ----------------------------------------------------
+
                 scan_text = (
                     scan_detail.findtext(
                         "Scan",
@@ -1559,13 +1611,21 @@ class BlueDartService:
                     or ""
                 ).strip()
 
+                # ----------------------------------------------------
+                # Scan code
+                # ----------------------------------------------------
+
                 scan_code = (
                     scan_detail.findtext(
                         "ScanCode",
                         "",
                     )
                     or ""
-                )
+                ).strip()
+
+                # ----------------------------------------------------
+                # Scan type
+                # ----------------------------------------------------
 
                 scan_type = (
                     scan_detail.findtext(
@@ -1573,7 +1633,11 @@ class BlueDartService:
                         "",
                     )
                     or ""
-                )
+                ).strip()
+
+                # ----------------------------------------------------
+                # Scan group type
+                # ----------------------------------------------------
 
                 scan_group_type = (
                     scan_detail.findtext(
@@ -1581,7 +1645,11 @@ class BlueDartService:
                         "",
                     )
                     or ""
-                )
+                ).strip()
+
+                # ----------------------------------------------------
+                # Scan date
+                # ----------------------------------------------------
 
                 scan_date = (
                     scan_detail.findtext(
@@ -1589,7 +1657,11 @@ class BlueDartService:
                         "",
                     )
                     or ""
-                )
+                ).strip()
+
+                # ----------------------------------------------------
+                # Scan time
+                # ----------------------------------------------------
 
                 scan_time = (
                     scan_detail.findtext(
@@ -1597,7 +1669,11 @@ class BlueDartService:
                         "",
                     )
                     or ""
-                )
+                ).strip()
+
+                # ----------------------------------------------------
+                # Scanned location
+                # ----------------------------------------------------
 
                 location = (
                     scan_detail.findtext(
@@ -1605,11 +1681,19 @@ class BlueDartService:
                         "",
                     )
                     or ""
-                )
+                ).strip()
+
+                # ----------------------------------------------------
+                # Default scanned time
+                # ----------------------------------------------------
 
                 scanned_at = datetime.now(
                     timezone.utc
                 )
+
+                # ----------------------------------------------------
+                # Parse Blue Dart date/time
+                # ----------------------------------------------------
 
                 try:
 
@@ -1622,8 +1706,16 @@ class BlueDartService:
                         )
                     )
 
-                except Exception:
+                except (
+                    ValueError,
+                    TypeError,
+                ):
+
                     pass
+
+                # ----------------------------------------------------
+                # Add scan
+                # ----------------------------------------------------
 
                 scans.append(
                     {
@@ -1636,15 +1728,14 @@ class BlueDartService:
                     }
                 )
 
+        # ============================================================
+        # 14. RETURN BLUE DART TRACKING DATA
+        # ============================================================
+
         return {
-
             "awb_number": awb_number,
-
             "status": status,
-
             "origin": origin,
-
             "destination": destination,
-
             "scans": scans,
         }
